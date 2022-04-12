@@ -69,7 +69,8 @@ TEST_OPTIONS += $(BASE_OPTIONS) \
   --test_output=errors \
   --keep_going \
   --verbose_failures=true \
-  --build_event_json_file=.build_events.json
+  --build_event_json_file=.build_events.json \
+  --test_tag_filters=runsc_ptrace
 
 # Basic options.
 UID := $(shell id -u ${USER})
