@@ -211,6 +211,8 @@ func (t *Task) advanceExitStateLocked(oldExit, newExit TaskExitState) {
 type runExit struct{}
 
 func (*runExit) execute(t *Task) taskRunState {
+	// FIXME: need Prepare*Sleep?
+
 	t.ptraceExit()
 	return (*runExitMain)(nil)
 }
@@ -257,9 +259,7 @@ func (*runExitMain) execute(t *Task) taskRunState {
 	// Handle the robust futex list.
 	t.exitRobustList()
 
-	// Deactivate the address space and update max RSS before releasing the
-	// task's MM.
-	t.Deactivate()
+	// Update max RSS before releasing the task's MM.
 	t.tg.pidns.owner.mu.Lock()
 	t.updateRSSLocked()
 	t.tg.pidns.owner.mu.Unlock()

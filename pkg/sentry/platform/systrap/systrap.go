@@ -280,7 +280,7 @@ func (c *context) Release() {
 	}
 }
 
-// PrepareSleep implements platform.Context.platform.PrepareSleep.
+// PrepareSleep implements platform.Context.PrepareSleep.
 func (c *context) PrepareSleep() {
 	ctx := c.sharedContext
 	if ctx == nil {
@@ -291,6 +291,10 @@ func (c *context) PrepareSleep() {
 		ctx.subprocess.decAwakeContexts()
 	}
 }
+
+// PrepareUninterruptibleSleep implements
+// platform.Context.PrepareUninterruptibleSleep.
+func (*context) PrepareUninterruptibleSleep() {}
 
 // Systrap represents a collection of seccomp subprocesses.
 type Systrap struct {
@@ -364,9 +368,8 @@ func (*Systrap) MaxUserAddress() hostarch.Addr {
 }
 
 // NewAddressSpace returns a new subprocess.
-func (p *Systrap) NewAddressSpace(any) (platform.AddressSpace, <-chan struct{}, error) {
-	as, err := newSubprocess(globalPool.source.createStub, p.memoryFile)
-	return as, nil, err
+func (p *Systrap) NewAddressSpace() (platform.AddressSpace, error) {
+	return newSubprocess(globalPool.source.createStub, p.memoryFile)
 }
 
 // NewContext returns an interruptible context.

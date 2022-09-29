@@ -50,6 +50,13 @@ func (mm *MemoryManager) beforeSave() {
 // afterLoad is invoked by stateify.
 func (mm *MemoryManager) afterLoad() {
 	mm.haveASIO = mm.p.SupportsAddressSpaceIO()
+	if mm.users.Load() != 0 {
+		as, err := mm.p.NewAddressSpace()
+		if err != nil {
+			panic(fmt.Sprintf("failed to create AddressSpace after restore: %v", err))
+		}
+		mm.as = as
+	}
 	mf := mm.mfp.MemoryFile()
 	for pseg := mm.pmas.FirstSegment(); pseg.Ok(); pseg = pseg.NextSegment() {
 		pseg.ValuePtr().file = mf

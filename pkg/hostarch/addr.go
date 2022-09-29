@@ -33,9 +33,10 @@ type Addr uintptr
 // expected to ever come up in practice.
 func (v Addr) AddLength(length uint64) (end Addr, ok bool) {
 	end = v + Addr(length)
-	// The second half of the following check is needed in case uintptr is
-	// smaller than 64 bits.
-	ok = end >= v && length <= uint64(^Addr(0))
+	// As of this writing (Go 1.19), addrAtLeast64b is required to prevent the
+	// compiler from generating a tautological `length <= MaxUint64` check on
+	// 64-bit architectures.
+	ok = end >= v && (addrAtLeast64b || length <= uint64(^Addr(0)))
 	return
 }
 
@@ -83,6 +84,18 @@ func (v Addr) IsPageAligned() bool {
 func (v Addr) ToRange(length uint64) (AddrRange, bool) {
 	end, ok := v.AddLength(length)
 	return AddrRange{v, end}, ok
+}
+
+// MustToRange is equivalent to ToRange, but panics if the end of the range
+// wraps around.
+//
+//go:nosplit
+func (v Addr) MustToRange(length uint64) AddrRange {
+	ar, ok := v.ToRange(length)
+	if !ok {
+		panic("hostarch.Addr.ToRange() wraps")
+	}
+	return ar
 }
 
 // IsPageAligned returns true if ar.Start.IsPageAligned() and
