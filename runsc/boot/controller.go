@@ -459,7 +459,7 @@ func (cm *containerManager) Restore(o *RestoreOpts, _ *struct{}) error {
 	k := &kernel.Kernel{
 		Platform: p,
 	}
-	mf, err := createMemoryFile()
+	mf, err := createMemoryFile(cm.l.hostShmemHuge)
 	if err != nil {
 		return fmt.Errorf("creating memory file: %v", err)
 	}

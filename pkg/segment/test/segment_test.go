@@ -94,10 +94,7 @@ func TestAddRandom(t *testing.T) {
 	order := rand.Perm(testSize)
 	var nrInsertions int
 	for i, j := range order {
-		if !s.AddWithoutMerging(Range{j, j + 1}, j+valueOffset) {
-			t.Errorf("Iteration %d: failed to insert segment with key %d", i, j)
-			break
-		}
+		s.InsertWithoutMergingRange(Range{j, j + 1}, j+valueOffset)
 		nrInsertions++
 		if err := s.segmentTestCheck(nrInsertions, validate); err != nil {
 			t.Errorf("Iteration %d: %v", i, err)
@@ -116,9 +113,7 @@ func TestAddRandom(t *testing.T) {
 func TestRemoveRandom(t *testing.T) {
 	var s Set
 	for i := 0; i < testSize; i++ {
-		if !s.AddWithoutMerging(Range{i, i + 1}, i+valueOffset) {
-			t.Fatalf("Failed to insert segment %d", i)
-		}
+		s.InsertWithoutMergingRange(Range{i, i + 1}, i+valueOffset)
 	}
 	order := rand.Perm(testSize)
 	var nrRemovals int
@@ -150,10 +145,7 @@ func TestMaxGapAddRandom(t *testing.T) {
 	order := rand.Perm(testSize)
 	var nrInsertions int
 	for i, j := range order {
-		if !s.AddWithoutMerging(Range{j, j + 1}, j+valueOffset) {
-			t.Errorf("Iteration %d: failed to insert segment with key %d", i, j)
-			break
-		}
+		s.InsertWithoutMergingRange(Range{j, j + 1}, j+valueOffset)
 		nrInsertions++
 		if err := s.segmentTestCheck(nrInsertions, validate); err != nil {
 			t.Errorf("Iteration %d: %v", i, err)
@@ -178,10 +170,7 @@ func TestMaxGapAddRandomWithRandomInterval(t *testing.T) {
 	order := randIntervalPermutation(testSize)
 	var nrInsertions int
 	for i, j := range order {
-		if !s.AddWithoutMerging(Range{j, j + rand.Intn(intervalLength-1) + 1}, j+valueOffset) {
-			t.Errorf("Iteration %d: failed to insert segment with key %d", i, j)
-			break
-		}
+		s.InsertWithoutMergingRange(Range{j, j + rand.Intn(intervalLength-1) + 1}, j+valueOffset)
 		nrInsertions++
 		if err := s.segmentTestCheck(nrInsertions, validate); err != nil {
 			t.Errorf("Iteration %d: %v", i, err)
@@ -205,11 +194,8 @@ func TestMaxGapAddRandomWithMerge(t *testing.T) {
 	var s gapSet
 	order := randIntervalPermutation(testSize)
 	nrInsertions := 1
-	for i, j := range order {
-		if !s.Add(Range{j, j + intervalLength}, j+valueOffset) {
-			t.Errorf("Iteration %d: failed to insert segment with key %d", i, j)
-			break
-		}
+	for _, j := range order {
+		s.InsertRange(Range{j, j + intervalLength}, j+valueOffset)
 		if err := checkSetMaxGap(&s); err != nil {
 			t.Errorf("When inserting %d: %v", j, err)
 			break
@@ -227,9 +213,7 @@ func TestMaxGapAddRandomWithMerge(t *testing.T) {
 func TestMaxGapRemoveRandom(t *testing.T) {
 	var s gapSet
 	for i := 0; i < testSize; i++ {
-		if !s.AddWithoutMerging(Range{i, i + 1}, i+valueOffset) {
-			t.Fatalf("Failed to insert segment %d", i)
-		}
+		s.InsertWithoutMergingRange(Range{i, i + 1}, i+valueOffset)
 	}
 	order := rand.Perm(testSize)
 	var nrRemovals int
@@ -264,9 +248,7 @@ func TestMaxGapRemoveRandom(t *testing.T) {
 func TestMaxGapRemoveHalfRandom(t *testing.T) {
 	var s gapSet
 	for i := 0; i < testSize; i++ {
-		if !s.AddWithoutMerging(Range{intervalLength * i, intervalLength*i + rand.Intn(intervalLength-1) + 1}, intervalLength*i+valueOffset) {
-			t.Fatalf("Failed to insert segment %d", i)
-		}
+		s.InsertWithoutMergingRange(Range{intervalLength * i, intervalLength*i + rand.Intn(intervalLength-1) + 1}, intervalLength*i+valueOffset)
 	}
 	order := randIntervalPermutation(testSize)
 	order = order[:testSize/2]
@@ -303,11 +285,8 @@ func TestMaxGapAddRandomRemoveRandomHalfWithMerge(t *testing.T) {
 	var s gapSet
 	order := randIntervalPermutation(testSize * 2)
 	order = order[:testSize]
-	for i, j := range order {
-		if !s.Add(Range{j, j + intervalLength}, j+valueOffset) {
-			t.Errorf("Iteration %d: failed to insert segment with key %d", i, j)
-			break
-		}
+	for _, j := range order {
+		s.InsertRange(Range{j, j + intervalLength}, j+valueOffset)
 		if err := checkSetMaxGap(&s); err != nil {
 			t.Errorf("When inserting %d: %v", j, err)
 			break
@@ -339,11 +318,8 @@ func TestNextLargeEnoughGap(t *testing.T) {
 	var s gapSet
 	order := randIntervalPermutation(testSize * 2)
 	order = order[:testSize]
-	for i, j := range order {
-		if !s.Add(Range{j, j + rand.Intn(intervalLength-1) + 1}, j+valueOffset) {
-			t.Errorf("Iteration %d: failed to insert segment with key %d", i, j)
-			break
-		}
+	for _, j := range order {
+		s.InsertRange(Range{j, j + rand.Intn(intervalLength-1) + 1}, j+valueOffset)
 		if err := checkSetMaxGap(&s); err != nil {
 			t.Errorf("When inserting %d: %v", j, err)
 			break
@@ -392,11 +368,8 @@ func TestPrevLargeEnoughGap(t *testing.T) {
 	var s gapSet
 	order := randIntervalPermutation(testSize * 2)
 	order = order[:testSize]
-	for i, j := range order {
-		if !s.Add(Range{j, j + rand.Intn(intervalLength-1) + 1}, j+valueOffset) {
-			t.Errorf("Iteration %d: failed to insert segment with key %d", i, j)
-			break
-		}
+	for _, j := range order {
+		s.InsertRange(Range{j, j + rand.Intn(intervalLength-1) + 1}, j+valueOffset)
 		if err := checkSetMaxGap(&s); err != nil {
 			t.Errorf("When inserting %d: %v", j, err)
 			break
@@ -445,9 +418,7 @@ func TestAddSequentialAdjacent(t *testing.T) {
 	var s Set
 	var nrInsertions int
 	for i := 0; i < testSize; i++ {
-		if !s.AddWithoutMerging(Range{i, i + 1}, i+valueOffset) {
-			t.Fatalf("Failed to insert segment %d", i)
-		}
+		s.InsertWithoutMergingRange(Range{i, i + 1}, i+valueOffset)
 		nrInsertions++
 		if err := s.segmentTestCheck(nrInsertions, validate); err != nil {
 			t.Errorf("Iteration %d: %v", i, err)
@@ -499,9 +470,7 @@ func TestAddSequentialNonAdjacent(t *testing.T) {
 	for i := 0; i < testSize; i++ {
 		// The range here differs from TestAddSequentialAdjacent so that
 		// consecutive segments are not adjacent.
-		if !s.AddWithoutMerging(Range{2 * i, 2*i + 1}, 2*i+valueOffset) {
-			t.Fatalf("Failed to insert segment %d", i)
-		}
+		s.InsertWithoutMergingRange(Range{2 * i, 2*i + 1}, 2*i+valueOffset)
 		nrInsertions++
 		if err := s.segmentTestCheck(nrInsertions, validate); err != nil {
 			t.Errorf("Iteration %d: %v", i, err)
@@ -527,7 +496,7 @@ func TestAddSequentialNonAdjacent(t *testing.T) {
 	}
 }
 
-func TestMergeSplit(t *testing.T) {
+func TestMerge(t *testing.T) {
 	tests := []struct {
 		name      string
 		initial   []Range
@@ -536,60 +505,26 @@ func TestMergeSplit(t *testing.T) {
 		final     []Range
 	}{
 		{
-			name:    "Add merges after existing segment",
+			name:    "InsertRange merges after existing segment",
 			initial: []Range{{1000, 1100}, {1100, 1200}},
 			final:   []Range{{1000, 1200}},
 		},
 		{
-			name:    "Add merges before existing segment",
+			name:    "InsertRange merges before existing segment",
 			initial: []Range{{1100, 1200}, {1000, 1100}},
 			final:   []Range{{1000, 1200}},
 		},
 		{
-			name:    "Add merges between existing segments",
+			name:    "InsertRange merges between existing segments",
 			initial: []Range{{1000, 1100}, {1200, 1300}, {1100, 1200}},
 			final:   []Range{{1000, 1300}},
-		},
-		{
-			name:      "SplitAt does nothing at a free address",
-			initial:   []Range{{100, 200}},
-			split:     true,
-			splitAddr: 300,
-			final:     []Range{{100, 200}},
-		},
-		{
-			name:      "SplitAt does nothing at the beginning of a segment",
-			initial:   []Range{{100, 200}},
-			split:     true,
-			splitAddr: 100,
-			final:     []Range{{100, 200}},
-		},
-		{
-			name:      "SplitAt does nothing at the end of a segment",
-			initial:   []Range{{100, 200}},
-			split:     true,
-			splitAddr: 200,
-			final:     []Range{{100, 200}},
-		},
-		{
-			name:      "SplitAt splits in the middle of a segment",
-			initial:   []Range{{100, 200}},
-			split:     true,
-			splitAddr: 150,
-			final:     []Range{{100, 150}, {150, 200}},
 		},
 	}
 Tests:
 	for _, test := range tests {
 		var s Set
 		for _, r := range test.initial {
-			if !s.Add(r, 0) {
-				t.Errorf("%s: Add(%v) failed; set contents:\n%v", test.name, r, &s)
-				continue Tests
-			}
-		}
-		if test.split {
-			s.SplitAt(test.splitAddr)
+			s.InsertRange(r, 0)
 		}
 		var i int
 		for seg := s.FirstSegment(); seg.Ok(); seg = seg.NextSegment() {
@@ -671,9 +606,7 @@ func benchmarkAddSequential(b *testing.B, size int) {
 	for n := 0; n < b.N; n++ {
 		var s Set
 		for i := 0; i < size; i++ {
-			if !s.AddWithoutMerging(Range{i, i + 1}, i) {
-				b.Fatalf("Failed to insert segment %d", i)
-			}
+			s.InsertWithoutMergingRange(Range{i, i + 1}, i)
 		}
 	}
 }
@@ -685,9 +618,7 @@ func benchmarkAddRandom(b *testing.B, size int) {
 	for n := 0; n < b.N; n++ {
 		var s Set
 		for _, i := range order {
-			if !s.AddWithoutMerging(Range{i, i + 1}, i) {
-				b.Fatalf("Failed to insert segment %d", i)
-			}
+			s.InsertWithoutMergingRange(Range{i, i + 1}, i)
 		}
 	}
 }
@@ -695,9 +626,7 @@ func benchmarkAddRandom(b *testing.B, size int) {
 func benchmarkFindSequential(b *testing.B, size int) {
 	var s Set
 	for i := 0; i < size; i++ {
-		if !s.AddWithoutMerging(Range{i, i + 1}, i) {
-			b.Fatalf("Failed to insert segment %d", i)
-		}
+		s.InsertWithoutMergingRange(Range{i, i + 1}, i)
 	}
 
 	b.ResetTimer()
@@ -713,9 +642,7 @@ func benchmarkFindSequential(b *testing.B, size int) {
 func benchmarkFindRandom(b *testing.B, size int) {
 	var s Set
 	for i := 0; i < size; i++ {
-		if !s.AddWithoutMerging(Range{i, i + 1}, i) {
-			b.Fatalf("Failed to insert segment %d", i)
-		}
+		s.InsertWithoutMergingRange(Range{i, i + 1}, i)
 	}
 	order := rand.Perm(size)
 
@@ -732,9 +659,7 @@ func benchmarkFindRandom(b *testing.B, size int) {
 func benchmarkIteration(b *testing.B, size int) {
 	var s Set
 	for i := 0; i < size; i++ {
-		if !s.AddWithoutMerging(Range{i, i + 1}, i) {
-			b.Fatalf("Failed to insert segment %d", i)
-		}
+		s.InsertWithoutMergingRange(Range{i, i + 1}, i)
 	}
 
 	b.ResetTimer()
@@ -753,9 +678,7 @@ func benchmarkAddFindRemoveSequential(b *testing.B, size int) {
 	for n := 0; n < b.N; n++ {
 		var s Set
 		for i := 0; i < size; i++ {
-			if !s.AddWithoutMerging(Range{i, i + 1}, i) {
-				b.Fatalf("Failed to insert segment %d", i)
-			}
+			s.InsertWithoutMergingRange(Range{i, i + 1}, i)
 		}
 		for i := 0; i < size; i++ {
 			seg := s.FindSegment(i)
@@ -777,9 +700,7 @@ func benchmarkAddFindRemoveRandom(b *testing.B, size int) {
 	for n := 0; n < b.N; n++ {
 		var s Set
 		for _, i := range order {
-			if !s.AddWithoutMerging(Range{i, i + 1}, i) {
-				b.Fatalf("Failed to insert segment %d", i)
-			}
+			s.InsertWithoutMergingRange(Range{i, i + 1}, i)
 		}
 		for _, i := range order {
 			seg := s.FindSegment(i)

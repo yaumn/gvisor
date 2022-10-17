@@ -17,7 +17,7 @@
 //
 // Lock order:
 //
-//	 fs locks, except for memmap.Mappable locks
+//	fs locks, except for memmap.Mappable locks
 //		mm.MemoryManager.metadataMu
 //			mm.MemoryManager.mappingMu
 //				Locks taken by memmap.MappingIdentity and memmap.Mappable methods other
@@ -25,9 +25,8 @@
 //					kernel.TaskSet.mu
 //						mm.MemoryManager.activeMu
 //							Locks taken by memmap.Mappable.Translate
-//								mm.privateRefs.mu
-//									platform.AddressSpace locks
-//										memmap.File locks
+//								platform.AddressSpace locks
+//									memmap.File locks
 //					mm.aioManager.mu
 //						mm.AIOContext.mu
 //
@@ -61,6 +60,11 @@ type MemoryManager struct {
 	p   platform.Platform
 	mfp pgalloc.MemoryFileProvider
 
+	// mf is the cached result of mfp.MemoryFile().
+	//
+	// mf is immutable.
+	mf *pgalloc.MemoryFile `state:"nosave"`
+
 	// haveASIO is the cached result of p.SupportsAddressSpaceIO(). Aside from
 	// eliminating an indirect call in the hot I/O path, this makes
 	// MemoryManager.asioEnabled() a leaf function, allowing it to be inlined.
@@ -72,13 +76,6 @@ type MemoryManager struct {
 	//
 	// layout is set by the binary loader before the MemoryManager can be used.
 	layout arch.MmapLayout
-
-	// privateRefs stores reference counts for private memory (memory whose
-	// ownership is shared by one or more pmas instead of being owned by a
-	// memmap.Mappable).
-	//
-	// privateRefs is immutable.
-	privateRefs *privateRefs
 
 	// users is the number of dependencies on the mappings in the MemoryManager.
 	// When the number of references in users reaches zero, all mappings are
@@ -162,28 +159,9 @@ type MemoryManager struct {
 	// maxRSS is protected by activeMu.
 	maxRSS uint64
 
-	// as is the platform.AddressSpace that pmas are mapped into. active is the
-	// number of contexts that require as to be non-nil; if active == 0, as may
-	// be nil.
-	//
-	// as is protected by activeMu. active is manipulated with atomic memory
-	// operations; transitions to and from zero are additionally protected by
-	// activeMu. (This is because such transitions may need to be atomic with
-	// changes to as.)
-	as     platform.AddressSpace `state:"nosave"`
-	active atomicbitops.Int32    `state:"zerovalue"`
-
-	// unmapAllOnActivate indicates that the next Activate call should activate
-	// an empty AddressSpace.
-	//
-	// This is used to ensure that an AddressSpace cached in
-	// NewAddressSpace is not used after some change in the MemoryManager
-	// or VMAs has made that AddressSpace stale.
-	//
-	// unmapAllOnActivate is protected by activeMu. It must only be set when
-	// there is no active or cached AddressSpace. If as != nil, then
-	// invalidations should be propagated immediately.
-	unmapAllOnActivate bool `state:"nosave"`
+	// as is the platform.AddressSpace that pmas are mapped into. as is immutable
+	// until users becomes 0, at which point as becomes nil.
+	as platform.AddressSpace `state:"nosave"`
 
 	// If captureInvalidations is true, calls to MM.Invalidate() are recorded
 	// in capturedInvalidations rather than being applied immediately to pmas.
@@ -231,11 +209,6 @@ type MemoryManager struct {
 	// aioManager keeps track of AIOContexts used for async IOs. AIOManager
 	// must be cloned when CLONE_VM is used.
 	aioManager aioManager
-
-	// sleepForActivation indicates whether the task should report to be sleeping
-	// before trying to activate the address space. When set to true, delays in
-	// activation are not reported as stuck tasks by the watchdog.
-	sleepForActivation bool
 
 	// vdsoSigReturnAddr is the address of 'vdso_sigreturn'.
 	vdsoSigReturnAddr uint64
@@ -325,94 +298,6 @@ type vma struct {
 	lastFault uintptr
 }
 
-const (
-	vmaRealPermsRead = 1 << iota
-	vmaRealPermsWrite
-	vmaRealPermsExecute
-	vmaEffectivePermsRead
-	vmaEffectivePermsWrite
-	vmaEffectivePermsExecute
-	vmaMaxPermsRead
-	vmaMaxPermsWrite
-	vmaMaxPermsExecute
-	vmaPrivate
-	vmaGrowsDown
-)
-
-func (v *vma) saveRealPerms() int {
-	var b int
-	if v.realPerms.Read {
-		b |= vmaRealPermsRead
-	}
-	if v.realPerms.Write {
-		b |= vmaRealPermsWrite
-	}
-	if v.realPerms.Execute {
-		b |= vmaRealPermsExecute
-	}
-	if v.effectivePerms.Read {
-		b |= vmaEffectivePermsRead
-	}
-	if v.effectivePerms.Write {
-		b |= vmaEffectivePermsWrite
-	}
-	if v.effectivePerms.Execute {
-		b |= vmaEffectivePermsExecute
-	}
-	if v.maxPerms.Read {
-		b |= vmaMaxPermsRead
-	}
-	if v.maxPerms.Write {
-		b |= vmaMaxPermsWrite
-	}
-	if v.maxPerms.Execute {
-		b |= vmaMaxPermsExecute
-	}
-	if v.private {
-		b |= vmaPrivate
-	}
-	if v.growsDown {
-		b |= vmaGrowsDown
-	}
-	return b
-}
-
-func (v *vma) loadRealPerms(b int) {
-	if b&vmaRealPermsRead > 0 {
-		v.realPerms.Read = true
-	}
-	if b&vmaRealPermsWrite > 0 {
-		v.realPerms.Write = true
-	}
-	if b&vmaRealPermsExecute > 0 {
-		v.realPerms.Execute = true
-	}
-	if b&vmaEffectivePermsRead > 0 {
-		v.effectivePerms.Read = true
-	}
-	if b&vmaEffectivePermsWrite > 0 {
-		v.effectivePerms.Write = true
-	}
-	if b&vmaEffectivePermsExecute > 0 {
-		v.effectivePerms.Execute = true
-	}
-	if b&vmaMaxPermsRead > 0 {
-		v.maxPerms.Read = true
-	}
-	if b&vmaMaxPermsWrite > 0 {
-		v.maxPerms.Write = true
-	}
-	if b&vmaMaxPermsExecute > 0 {
-		v.maxPerms.Execute = true
-	}
-	if b&vmaPrivate > 0 {
-		v.private = true
-	}
-	if b&vmaGrowsDown > 0 {
-		v.growsDown = true
-	}
-}
-
 func (v *vma) copy() vma {
 	return vma{
 		mappable:       v.mappable,
@@ -442,11 +327,6 @@ type pma struct {
 	file memmap.File `state:"nosave"`
 
 	// off is the offset into file at which this pma begins.
-	//
-	// Note that pmas do *not* hold references on offsets in file! If private
-	// is true, MemoryManager.privateRefs holds the reference instead. If
-	// private is false, the corresponding memmap.Mappable holds the reference
-	// instead (per memmap.Mappable.Translate requirement).
 	off uint64
 
 	// translatePerms is the permissions returned by memmap.Mappable.Translate.
@@ -469,53 +349,27 @@ type pma struct {
 
 	// private is true if this pma represents private memory.
 	//
-	// If private is true, file must be MemoryManager.mfp.MemoryFile(), the pma
-	// holds a reference on the mapped memory that is tracked in privateRefs,
-	// and calls to Invalidate for which
-	// memmap.InvalidateOpts.InvalidatePrivate is false should ignore the pma.
+	// If private is true, file must be MemoryManager.mfp.MemoryFile(), and
+	// calls to Invalidate for which memmap.InvalidateOpts.InvalidatePrivate is
+	// false should ignore the pma.
 	//
 	// If private is false, this pma caches a translation from the
 	// corresponding vma's memmap.Mappable.Translate.
 	private bool
+
+	// If huge is true, this pma was returned by a call to MemoryFile.Allocate()
+	// with AllocOpts.Hugepage = true. Note that due to pma splitting, pma may
+	// no longer be hugepage-aligned.
+	//
+	// Invariant: If huge == true, then private == true.
+	huge bool
 
 	// If internalMappings is not empty, it is the cached return value of
 	// file.MapInternal for the memmap.FileRange mapped by this pma.
 	internalMappings safemem.BlockSeq `state:"nosave"`
 }
 
-// +stateify savable
-type privateRefs struct {
-	mu privateRefsMutex `state:"nosave"`
-
-	// refs maps offsets into MemoryManager.mfp.MemoryFile() to the number of
-	// pmas (or, equivalently, MemoryManagers) that share ownership of the
-	// memory at that offset.
-	refs fileRefcountSet
-}
-
 type invalidateArgs struct {
 	ar   hostarch.AddrRange
 	opts memmap.InvalidateOpts
-}
-
-// fileRefcountSetFunctions implements segment.Functions for fileRefcountSet.
-type fileRefcountSetFunctions struct{}
-
-func (fileRefcountSetFunctions) MinKey() uint64 {
-	return 0
-}
-
-func (fileRefcountSetFunctions) MaxKey() uint64 {
-	return ^uint64(0)
-}
-
-func (fileRefcountSetFunctions) ClearValue(_ *int32) {
-}
-
-func (fileRefcountSetFunctions) Merge(_ memmap.FileRange, rc1 int32, _ memmap.FileRange, rc2 int32) (int32, bool) {
-	return rc1, rc1 == rc2
-}
-
-func (fileRefcountSetFunctions) Split(_ memmap.FileRange, rc int32, _ uint64) (int32, int32) {
-	return rc, rc
 }

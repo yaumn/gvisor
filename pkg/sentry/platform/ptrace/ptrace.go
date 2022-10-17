@@ -202,6 +202,10 @@ func (c *context) PullFullState(as platform.AddressSpace, ac *arch.Context64) er
 // PrepareSleep implements platform.Context.platform.PrepareSleep.
 func (*context) PrepareSleep() {}
 
+// PrepareUninterruptibleSleep implements
+// platform.Context.platform.PrepareUninterruptibleSleep.
+func (*context) PrepareUninterruptibleSleep() {}
+
 // PTrace represents a collection of ptrace subprocesses.
 type PTrace struct {
 	platform.MMapMinAddr
@@ -255,9 +259,8 @@ func (*PTrace) MaxUserAddress() hostarch.Addr {
 }
 
 // NewAddressSpace returns a new subprocess.
-func (p *PTrace) NewAddressSpace(any) (platform.AddressSpace, <-chan struct{}, error) {
-	as, err := newSubprocess(globalPool.master.createStub)
-	return as, nil, err
+func (p *PTrace) NewAddressSpace() (platform.AddressSpace, error) {
+	return newSubprocess(globalPool.master.createStub)
 }
 
 type constructor struct{}

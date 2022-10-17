@@ -66,7 +66,7 @@ func (refs *FrameRefSet) IncRefAndAccount(fr memmap.FileRange) {
 			usage.MemoryAccounting.Inc(newRange.Length(), usage.Mapped)
 			seg, gap = refs.InsertWithoutMerging(gap, newRange, 1).NextNonEmpty()
 		default:
-			refs.MergeAdjacent(fr)
+			refs.MergeOutsideRange(fr)
 			return
 		}
 	}
@@ -87,5 +87,5 @@ func (refs *FrameRefSet) DecRefAndAccount(fr memmap.FileRange) {
 			seg = seg.NextSegment()
 		}
 	}
-	refs.MergeAdjacent(fr)
+	refs.MergeOutsideRange(fr)
 }

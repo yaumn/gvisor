@@ -28,18 +28,22 @@ import (
 )
 
 // NewMemoryManager returns a new MemoryManager with no mappings and 1 user.
-func NewMemoryManager(p platform.Platform, mfp pgalloc.MemoryFileProvider, sleepForActivation bool) *MemoryManager {
-	return &MemoryManager{
-		p:                  p,
-		mfp:                mfp,
-		haveASIO:           p.SupportsAddressSpaceIO(),
-		privateRefs:        &privateRefs{},
-		users:              atomicbitops.FromInt32(1),
-		auxv:               arch.Auxv{},
-		dumpability:        atomicbitops.FromInt32(int32(UserDumpable)),
-		aioManager:         aioManager{contexts: make(map[uint64]*AIOContext)},
-		sleepForActivation: sleepForActivation,
+func NewMemoryManager(p platform.Platform, mfp pgalloc.MemoryFileProvider) (*MemoryManager, error) {
+	as, err := p.NewAddressSpace()
+	if err != nil {
+		return nil, err
 	}
+	return &MemoryManager{
+		p:           p,
+		mfp:         mfp,
+		mf:          mfp.MemoryFile(),
+		haveASIO:    p.SupportsAddressSpaceIO(),
+		users:       atomicbitops.FromInt32(1),
+		as:          as,
+		auxv:        arch.Auxv{},
+		dumpability: atomicbitops.FromInt32(int32(UserDumpable)),
+		aioManager:  aioManager{contexts: make(map[uint64]*AIOContext)},
+	}, nil
 }
 
 // SetMmapLayout initializes mm's layout from the given arch.Context64.
@@ -57,6 +61,11 @@ func (mm *MemoryManager) SetMmapLayout(ac *arch.Context64, r *limits.LimitSet) (
 // Fork creates a copy of mm with 1 user, as for Linux syscalls fork() or
 // clone() (without CLONE_VM).
 func (mm *MemoryManager) Fork(ctx context.Context) (*MemoryManager, error) {
+	as, err := mm.p.NewAddressSpace()
+	if err != nil {
+		return nil, err
+	}
+
 	mm.AddressSpace().PreFork()
 	defer mm.AddressSpace().PostFork()
 	mm.metadataMu.Lock()
@@ -73,15 +82,16 @@ func (mm *MemoryManager) Fork(ctx context.Context) (*MemoryManager, error) {
 	mm.mappingMu.RLock()
 	defer mm.mappingMu.RUnlock()
 	mm2 := &MemoryManager{
-		p:           mm.p,
-		mfp:         mm.mfp,
-		haveASIO:    mm.haveASIO,
-		layout:      mm.layout,
-		privateRefs: mm.privateRefs,
-		users:       atomicbitops.FromInt32(1),
-		brk:         mm.brk,
-		usageAS:     mm.usageAS,
-		dataAS:      mm.dataAS,
+		p:        mm.p,
+		mfp:      mm.mfp,
+		mf:       mm.mf,
+		haveASIO: mm.haveASIO,
+		layout:   mm.layout,
+		users:    atomicbitops.FromInt32(1),
+		as:       as,
+		brk:      mm.brk,
+		usageAS:  mm.usageAS,
+		dataAS:   mm.dataAS,
 		// "The child does not inherit its parent's memory locks (mlock(2),
 		// mlockall(2))." - fork(2). So lockedAS is 0 and defMLockMode is
 		// MLockNone, both of which are zero values. vma.mlockMode is reset
@@ -91,11 +101,10 @@ func (mm *MemoryManager) Fork(ctx context.Context) (*MemoryManager, error) {
 		envv:                 mm.envv,
 		auxv:                 append(arch.Auxv(nil), mm.auxv...),
 		// IncRef'd below, once we know that there isn't an error.
-		executable:         mm.executable,
-		dumpability:        atomicbitops.FromInt32(mm.dumpability.Load()),
-		aioManager:         aioManager{contexts: make(map[uint64]*AIOContext)},
-		sleepForActivation: mm.sleepForActivation,
-		vdsoSigReturnAddr:  mm.vdsoSigReturnAddr,
+		executable:        mm.executable,
+		dumpability:       atomicbitops.FromInt32(mm.dumpability.Load()),
+		aioManager:        aioManager{contexts: make(map[uint64]*AIOContext)},
+		vdsoSigReturnAddr: mm.vdsoSigReturnAddr,
 	}
 
 	// Copy vmas.
@@ -119,6 +128,7 @@ func (mm *MemoryManager) Fork(ctx context.Context) (*MemoryManager, error) {
 		if vma.mappable != nil {
 			if err := vma.mappable.AddMapping(ctx, mm2, vmaAR, vma.off, vma.canWriteMappableLocked()); err != nil {
 				_, droppedIDs = mm2.removeVMAsLocked(ctx, mm2.applicationAddrRange(), droppedIDs)
+				as.Release()
 				return nil, err
 			}
 		}
@@ -144,7 +154,7 @@ func (mm *MemoryManager) Fork(ctx context.Context) (*MemoryManager, error) {
 	mm2.activeMu.NestedLock(activeLockForked)
 	defer mm2.activeMu.NestedUnlock(activeLockForked)
 	if dontforks {
-		defer mm.pmas.MergeRange(mm.applicationAddrRange())
+		defer mm.pmas.MergeInsideRange(mm.applicationAddrRange())
 	}
 	srcvseg := mm.vmas.FirstSegment()
 	dstpgap := mm2.pmas.FirstGap()
@@ -197,8 +207,7 @@ func (mm *MemoryManager) Fork(ctx context.Context) (*MemoryManager, error) {
 			pma.maxPerms.Write = false
 		}
 		fr := srcpseg.fileRange()
-		mm2.incPrivateRef(fr)
-		srcpseg.ValuePtr().file.IncRef(fr)
+		mm.mf.IncRef(fr)
 		addrRange := srcpseg.Range()
 		mm2.addRSSLocked(addrRange)
 		dstpgap = mm2.pmas.Insert(dstpgap, addrRange, *pma).NextGap()
@@ -272,17 +281,9 @@ func (mm *MemoryManager) DecUsers(ctx context.Context) {
 		exe.DecRef(ctx)
 	}
 
-	mm.activeMu.Lock()
-	// Sanity check.
-	if mm.active.Load() != 0 {
-		panic("active address space lost?")
-	}
-	// Make sure the AddressSpace is returned.
-	if mm.as != nil {
-		mm.as.Release()
-		mm.as = nil
-	}
-	mm.activeMu.Unlock()
+	// User count 0 => no concurrent access to mm.as.
+	mm.as.Release()
+	mm.as = nil
 
 	var droppedIDs []memmap.MappingIdentity
 	mm.mappingMu.Lock()

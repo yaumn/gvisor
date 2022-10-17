@@ -205,16 +205,15 @@ func (mm *MemoryManager) getPMAsInternalLocked(ctx context.Context, vseg vmaIter
 		}
 	}
 
-	opts := pgalloc.AllocOpts{Kind: usage.Anonymous, Dir: pgalloc.BottomUp}
+	allocDir := pgalloc.BottomUp
 	vma := vseg.ValuePtr()
 	if uintptr(ar.Start) < atomic.LoadUintptr(&vma.lastFault) {
 		// Detect cases where memory is accessed downwards and change memory file
 		// allocation order to increase the chances that pages are coalesced.
-		opts.Dir = pgalloc.TopDown
+		allocDir = pgalloc.TopDown
 	}
 	atomic.StoreUintptr(&vma.lastFault, uintptr(ar.Start))
 
-	mf := mm.mfp.MemoryFile()
 	// Limit the range we allocate to ar, aligned to privateAllocUnit.
 	maskAR := privateAligned(ar)
 	didUnmapAS := false
@@ -240,7 +239,15 @@ func (mm *MemoryManager) getPMAsInternalLocked(ctx context.Context, vseg vmaIter
 				if vma.mappable == nil {
 					// Private anonymous mappings get pmas by allocating.
 					allocAR := optAR.Intersect(maskAR)
-					fr, err := mf.Allocate(uint64(allocAR.Length()), opts)
+					// Don't back stacks with huge pages due to low utilization and
+					// because they're often fragmented by copy-on-write.
+					huge := mm.mf.HugepagesEnabled() && allocAR.IsHugePageAligned() && !vma.growsDown
+					fr, err := mm.mf.Allocate(uint64(allocAR.Length()), pgalloc.AllocOpts{
+						Kind:     usage.Anonymous,
+						Hugepage: huge,
+						Hint:     pgalloc.HintOne,
+						Dir:      allocDir,
+					})
 					if err != nil {
 						return pstart, pgap, err
 					}
@@ -250,10 +257,8 @@ func (mm *MemoryManager) getPMAsInternalLocked(ctx context.Context, vseg vmaIter
 						}
 					}
 					mm.addRSSLocked(allocAR)
-					mm.incPrivateRef(fr)
-					mf.IncRef(fr)
 					pseg, pgap = mm.pmas.Insert(pgap, allocAR, pma{
-						file:           mf,
+						file:           mm.mf,
 						off:            fr.Start,
 						translatePerms: hostarch.AnyAccess,
 						effectivePerms: vma.effectivePerms,
@@ -262,6 +267,7 @@ func (mm *MemoryManager) getPMAsInternalLocked(ctx context.Context, vseg vmaIter
 						// only reference, the new pma does not need
 						// copy-on-write.
 						private: true,
+						huge:    huge,
 					}).NextNonEmpty()
 					pstart = pmaIterator{} // iterators invalidated
 				} else {
@@ -373,7 +379,13 @@ func (mm *MemoryManager) getPMAsInternalLocked(ctx context.Context, vseg vmaIter
 						return pstart, pseg.PrevGap(), err
 					}
 					// Copy contents.
-					fr, err := mf.AllocateAndFill(uint64(copyAR.Length()), usage.Anonymous, true /* populate */, &safemem.BlockSeqReader{mm.internalMappingsLocked(pseg, copyAR)})
+					huge := mm.mf.HugepagesEnabled() && copyAR.IsHugePageAligned()
+					fr, err := mm.mf.AllocateAndFill(uint64(copyAR.Length()), pgalloc.AllocOpts{
+						Kind:                usage.Anonymous,
+						Hugepage:            huge,
+						Hint:                pgalloc.HintAll,
+						TryPopulateInternal: true,
+					}, &safemem.BlockSeqReader{mm.internalMappingsLocked(pseg, copyAR)})
 					if _, ok := err.(safecopy.BusError); ok {
 						// If we got SIGBUS during the copy, deliver SIGBUS to
 						// userspace (instead of SIGSEGV) if we're breaking
@@ -385,7 +397,7 @@ func (mm *MemoryManager) getPMAsInternalLocked(ctx context.Context, vseg vmaIter
 					}
 					// Unmap all of maskAR, not just copyAR, to minimize host
 					// syscalls. AddressSpace mappings must be removed before
-					// mm.decPrivateRef().
+					// oldpma.file.DecRef().
 					if !didUnmapAS {
 						mm.unmapASLocked(maskAR)
 						didUnmapAS = true
@@ -399,19 +411,15 @@ func (mm *MemoryManager) getPMAsInternalLocked(ctx context.Context, vseg vmaIter
 						pstart = pmaIterator{} // iterators invalidated
 					}
 					oldpma = pseg.ValuePtr()
-					if oldpma.private {
-						mm.decPrivateRef(pseg.fileRange())
-					}
 					oldpma.file.DecRef(pseg.fileRange())
-					mm.incPrivateRef(fr)
-					mf.IncRef(fr)
-					oldpma.file = mf
+					oldpma.file = mm.mf
 					oldpma.off = fr.Start
 					oldpma.translatePerms = hostarch.AnyAccess
 					oldpma.effectivePerms = vma.effectivePerms
 					oldpma.maxPerms = vma.maxPerms
 					oldpma.needCOW = false
 					oldpma.private = true
+					oldpma.huge = huge
 					oldpma.internalMappings = safemem.BlockSeq{}
 					// Try to merge the pma with its neighbors.
 					if prev := pseg.PrevSegment(); prev.Ok() {
@@ -568,12 +576,7 @@ func (mm *MemoryManager) isPMACopyOnWriteLocked(vseg vmaIterator, pseg pmaIterat
 	// ownership of it instead of copying. If we do hold the only reference,
 	// additional references can only be taken by mm.Fork(), which is excluded
 	// by mm.activeMu, so this isn't racy.
-	mm.privateRefs.mu.Lock()
-	defer mm.privateRefs.mu.Unlock()
-	fr := pseg.fileRange()
-	// This check relies on mm.privateRefs.refs being kept fully merged.
-	rseg := mm.privateRefs.refs.FindSegment(fr.Start)
-	if rseg.Ok() && rseg.Value() == 1 && fr.End <= rseg.End() {
+	if mm.mf.HasUniqueRef(pseg.fileRange()) {
 		pma.needCOW = false
 		// pma.private => pma.translatePerms == hostarch.AnyAccess
 		vma := vseg.ValuePtr()
@@ -625,7 +628,7 @@ func (mm *MemoryManager) invalidateLocked(ar hostarch.AddrRange, invalidatePriva
 			if !didUnmapAS {
 				// Unmap all of ar, not just pseg.Range(), to minimize host
 				// syscalls. AddressSpace mappings must be removed before
-				// mm.decPrivateRef().
+				// pma.file.DecRef().
 				//
 				// Note that we do more than just ar here, and extrapolate
 				// to the end of any previous region that we may have mapped.
@@ -648,9 +651,6 @@ func (mm *MemoryManager) invalidateLocked(ar hostarch.AddrRange, invalidatePriva
 				}
 				mm.unmapASLocked(unmapAR)
 				didUnmapAS = true
-			}
-			if pma.private {
-				mm.decPrivateRef(pseg.fileRange())
 			}
 			mm.removeRSSLocked(pseg.Range())
 			pma.file.DecRef(pseg.fileRange())
@@ -925,53 +925,6 @@ func (mm *MemoryManager) vecInternalMappingsLocked(ars hostarch.AddrRangeSeq) sa
 		}
 	}
 	return safemem.BlockSeqFromSlice(ims)
-}
-
-// incPrivateRef acquires a reference on private pages in fr.
-func (mm *MemoryManager) incPrivateRef(fr memmap.FileRange) {
-	mm.privateRefs.mu.Lock()
-	defer mm.privateRefs.mu.Unlock()
-	refSet := &mm.privateRefs.refs
-	seg, gap := refSet.Find(fr.Start)
-	for {
-		switch {
-		case seg.Ok() && seg.Start() < fr.End:
-			seg = refSet.Isolate(seg, fr)
-			seg.SetValue(seg.Value() + 1)
-			seg, gap = seg.NextNonEmpty()
-		case gap.Ok() && gap.Start() < fr.End:
-			seg, gap = refSet.InsertWithoutMerging(gap, gap.Range().Intersect(fr), 1).NextNonEmpty()
-		default:
-			refSet.MergeAdjacent(fr)
-			return
-		}
-	}
-}
-
-// decPrivateRef releases a reference on private pages in fr.
-func (mm *MemoryManager) decPrivateRef(fr memmap.FileRange) {
-	var freed []memmap.FileRange
-
-	mm.privateRefs.mu.Lock()
-	refSet := &mm.privateRefs.refs
-	seg := refSet.LowerBoundSegment(fr.Start)
-	for seg.Ok() && seg.Start() < fr.End {
-		seg = refSet.Isolate(seg, fr)
-		if old := seg.Value(); old == 1 {
-			freed = append(freed, seg.Range())
-			seg = refSet.Remove(seg).NextSegment()
-		} else {
-			seg.SetValue(old - 1)
-			seg = seg.NextSegment()
-		}
-	}
-	refSet.MergeAdjacent(fr)
-	mm.privateRefs.mu.Unlock()
-
-	mf := mm.mfp.MemoryFile()
-	for _, fr := range freed {
-		mf.DecRef(fr)
-	}
 }
 
 // addRSSLocked updates the current and maximum resident set size of a

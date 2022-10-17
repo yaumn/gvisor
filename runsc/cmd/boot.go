@@ -34,6 +34,7 @@ import (
 	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/metric"
 	"gvisor.dev/gvisor/pkg/ring0"
+	"gvisor.dev/gvisor/pkg/sentry/hostmm"
 	"gvisor.dev/gvisor/pkg/sentry/platform"
 	"gvisor.dev/gvisor/runsc/boot"
 	"gvisor.dev/gvisor/runsc/cmd/util"
@@ -140,6 +141,9 @@ type Boot struct {
 	// /sys/devices/virtual/dmi/id/product_name.
 	productName string
 
+	// Value of /sys/kernel/mm/transparent_hugepage/shmem_enabled on the host.
+	hostShmemHuge string
+
 	// FDs for profile data.
 	profileFDs profile.FDArgs
 
@@ -180,6 +184,7 @@ func (b *Boot) SetFlags(f *flag.FlagSet) {
 	f.Uint64Var(&b.totalMem, "total-memory", 0, "sets the initial amount of total memory to report back to the container")
 	f.BoolVar(&b.attached, "attached", false, "if attached is true, kills the sandbox process when the parent process terminates")
 	f.StringVar(&b.productName, "product-name", "", "value to show in /sys/devices/virtual/dmi/id/product_name")
+	f.StringVar(&b.hostShmemHuge, "host-shmem-huge", "", "value of /sys/kernel/mm/transparent_hugepage/shmem_enabled on the host")
 
 	// Open FDs that are donated to the sandbox.
 	f.IntVar(&b.specFD, "spec-fd", -1, "required fd with the container spec")
@@ -220,13 +225,21 @@ func (b *Boot) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcomma
 	// Initialize ring0 library.
 	ring0.InitDefault()
 
+	// Do these before chroot takes effect, otherwise we can't read /sys.
 	if len(b.productName) == 0 {
-		// Do this before chroot takes effect, otherwise we can't read /sys.
 		if product, err := ioutil.ReadFile("/sys/devices/virtual/dmi/id/product_name"); err != nil {
 			log.Warningf("Not setting product_name: %v", err)
 		} else {
 			b.productName = strings.TrimSpace(string(product))
 			log.Infof("Setting product_name: %q", b.productName)
+		}
+	}
+	if len(b.hostShmemHuge) == 0 {
+		hostShmemHuge, err := hostmm.GetTransparentHugepageEnum("shmem_enabled")
+		if err != nil {
+			log.Warningf("Failed to infer --host-shmem-huge: %v")
+		} else {
+			b.hostShmemHuge = hostShmemHuge
 		}
 	}
 
@@ -407,6 +420,7 @@ func (b *Boot) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcomma
 		TotalMem:            b.totalMem,
 		UserLogFD:           b.userLogFD,
 		ProductName:         b.productName,
+		HostShmemHuge:       b.hostShmemHuge,
 		PodInitConfigFD:     b.podInitConfigFD,
 		SinkFDs:             b.sinkFDs.GetArray(),
 		ProfileOpts:         b.profileFDs.ToOpts(),
@@ -480,6 +494,9 @@ func (b *Boot) prepareArgs(exclude ...string) []string {
 			}
 			if len(b.productName) > 0 {
 				args = append(args, "--product-name", b.productName)
+			}
+			if len(b.hostShmemHuge) > 0 {
+				args = append(args, "--host-shmem-huge", b.hostShmemHuge)
 			}
 		}
 	skip:

@@ -122,53 +122,6 @@ type Set struct {
 	root node `state:".(*SegmentDataSlices)"`
 }
 
-// IsEmpty returns true if the set contains no segments.
-func (s *Set) IsEmpty() bool {
-	return s.root.nrSegments == 0
-}
-
-// IsEmptyRange returns true iff no segments in the set overlap the given
-// range. This is semantically equivalent to s.SpanRange(r) == 0, but may be
-// more efficient.
-func (s *Set) IsEmptyRange(r Range) bool {
-	switch {
-	case r.Length() < 0:
-		panic(fmt.Sprintf("invalid range %v", r))
-	case r.Length() == 0:
-		return true
-	}
-	_, gap := s.Find(r.Start)
-	if !gap.Ok() {
-		return false
-	}
-	return r.End <= gap.End()
-}
-
-// Span returns the total size of all segments in the set.
-func (s *Set) Span() Key {
-	var sz Key
-	for seg := s.FirstSegment(); seg.Ok(); seg = seg.NextSegment() {
-		sz += seg.Range().Length()
-	}
-	return sz
-}
-
-// SpanRange returns the total size of the intersection of segments in the set
-// with the given range.
-func (s *Set) SpanRange(r Range) Key {
-	switch {
-	case r.Length() < 0:
-		panic(fmt.Sprintf("invalid range %v", r))
-	case r.Length() == 0:
-		return 0
-	}
-	var sz Key
-	for seg := s.LowerBoundSegment(r.Start); seg.Ok() && seg.Start() < r.End; seg = seg.NextSegment() {
-		sz += seg.Range().Intersect(r).Length()
-	}
-	return sz
-}
-
 // FirstSegment returns the first segment in the set. If the set is empty,
 // FirstSegment returns a terminal iterator.
 func (s *Set) FirstSegment() Iterator {
@@ -292,42 +245,115 @@ func (s *Set) UpperBoundGap(max Key) GapIterator {
 	return seg.PrevGap()
 }
 
-// Add inserts the given segment into the set and returns true. If the new
-// segment can be merged with adjacent segments, Add will do so. If the new
-// segment would overlap an existing segment, Add returns false. If Add
-// succeeds, all existing iterators are invalidated.
-func (s *Set) Add(r Range, val Value) bool {
-	if r.Length() <= 0 {
-		panic(fmt.Sprintf("invalid segment range %v", r))
+// FirstLargeEnoughGap returns the first gap in the set with at least the given
+// length. If no such gap exists, FirstLargeEnoughGap returns a terminal
+// iterator.
+//
+// Precondition: trackGaps must be 1.
+func (s *Set) FirstLargeEnoughGap(minSize Key) GapIterator {
+	if trackGaps != 1 {
+		panic("set is not tracking gaps")
 	}
-	gap := s.FindGap(r.Start)
-	if !gap.Ok() {
-		return false
+	gap := s.FirstGap()
+	if gap.Range().Length() >= minSize {
+		return gap
 	}
-	if r.End > gap.End() {
-		return false
-	}
-	s.Insert(gap, r, val)
-	return true
+	return gap.NextLargeEnoughGap(minSize)
 }
 
-// AddWithoutMerging inserts the given segment into the set and returns true.
-// If it would overlap an existing segment, AddWithoutMerging does nothing and
-// returns false. If AddWithoutMerging succeeds, all existing iterators are
-// invalidated.
-func (s *Set) AddWithoutMerging(r Range, val Value) bool {
-	if r.Length() <= 0 {
-		panic(fmt.Sprintf("invalid segment range %v", r))
+// LastLargeEnoughGap returns the last gap in the set with at least the given
+// length. If no such gap exists, LastLargeEnoughGap returns a terminal
+// iterator.
+//
+// Precondition: trackGaps must be 1.
+func (s *Set) LastLargeEnoughGap(minSize Key) GapIterator {
+	if trackGaps != 1 {
+		panic("set is not tracking gaps")
 	}
-	gap := s.FindGap(r.Start)
+	gap := s.LastGap()
+	if gap.Range().Length() >= minSize {
+		return gap
+	}
+	return gap.PrevLargeEnoughGap(minSize)
+}
+
+// LowerBoundLargeEnoughGap returns the first gap in the set with at least the
+// given length and whose range contains a key greater than or equal to min. If
+// no such gap exists, LowerBoundLargeEnoughGap returns a terminal iterator.
+//
+// Precondition: trackGaps must be 1.
+func (s *Set) LowerBoundLargeEnoughGap(min, minSize Key) GapIterator {
+	if trackGaps != 1 {
+		panic("set is not tracking gaps")
+	}
+	gap := s.LowerBoundGap(min)
+	if gap.Range().Length() >= minSize {
+		return gap
+	}
+	return gap.NextLargeEnoughGap(minSize)
+}
+
+// UpperBoundLargeEnoughGap returns the last gap in the set with at least the
+// given length and whose range contains a key less than or equal to max. If no
+// such gap exists, UpperBoundLargeEnoughGap returns a terminal iterator.
+//
+// Precondition: trackGaps must be 1.
+func (s *Set) UpperBoundLargeEnoughGap(max, minSize Key) GapIterator {
+	if trackGaps != 1 {
+		panic("set is not tracking gaps")
+	}
+	gap := s.UpperBoundGap(max)
+	if gap.Range().Length() >= minSize {
+		return gap
+	}
+	return gap.PrevLargeEnoughGap(minSize)
+}
+
+// IsEmpty returns true if the set contains no segments.
+func (s *Set) IsEmpty() bool {
+	return s.root.nrSegments == 0
+}
+
+// IsEmptyRange returns true iff no segments in the set overlap the given
+// range. This is semantically equivalent to s.SpanRange(r) == 0, but may be
+// more efficient.
+func (s *Set) IsEmptyRange(r Range) bool {
+	switch {
+	case r.Length() < 0:
+		panic(fmt.Sprintf("invalid range %v", r))
+	case r.Length() == 0:
+		return true
+	}
+	_, gap := s.Find(r.Start)
 	if !gap.Ok() {
 		return false
 	}
-	if r.End > gap.End() {
-		return false
+	return r.End <= gap.End()
+}
+
+// Span returns the total size of all segments in the set.
+func (s *Set) Span() Key {
+	var sz Key
+	for seg := s.FirstSegment(); seg.Ok(); seg = seg.NextSegment() {
+		sz += seg.Range().Length()
 	}
-	s.InsertWithoutMergingUnchecked(gap, r, val)
-	return true
+	return sz
+}
+
+// SpanRange returns the total size of the intersection of segments in the set
+// with the given range.
+func (s *Set) SpanRange(r Range) Key {
+	switch {
+	case r.Length() < 0:
+		panic(fmt.Sprintf("invalid range %v", r))
+	case r.Length() == 0:
+		return 0
+	}
+	var sz Key
+	for seg := s.LowerBoundSegment(r.Start); seg.Ok() && seg.Start() < r.End; seg = seg.NextSegment() {
+		sz += seg.Range().Intersect(r).Length()
+	}
+	return sz
 }
 
 // Insert inserts the given segment into the given gap. If the new segment can
@@ -424,6 +450,107 @@ func (s *Set) InsertWithoutMergingUnchecked(gap GapIterator, r Range, val Value)
 	return Iterator{gap.node, gap.index}
 }
 
+// InsertRange inserts the given segment into the set. If the new segment can
+// be merged with adjacent segments, InsertRange will do so. InsertRange
+// returns an iterator to the segment containing the inserted value (which may
+// have been merged with other values). All existing iterators (excluding the
+// returned iterator) are invalidated.
+//
+// If the new segment would overlap an existing segment, or if r is invalid,
+// InsertRange panics.
+//
+// InsertRange searches the set to find the gap to insert into. If the caller
+// already has the appropriate GapIterator, or if the caller needs to do
+// additional work between finding the gap and insertion, use Insert instead.
+func (s *Set) InsertRange(r Range, val Value) Iterator {
+	if r.Length() <= 0 {
+		panic(fmt.Sprintf("invalid segment range %v", r))
+	}
+	seg, gap := s.Find(r.Start)
+	if seg.Ok() {
+		panic(fmt.Sprintf("new segment %v overlaps existing segment %v", r, seg.Range()))
+	}
+	if gap.End() < r.End {
+		panic(fmt.Sprintf("new segment %v overlaps existing segment %v", r, gap.NextSegment().Range()))
+	}
+	return s.Insert(gap, r, val)
+}
+
+// InsertWithoutMergingRange inserts the given segment into the set and returns
+// an iterator to the inserted segment. All existing iterators (excluding the
+// returned iterator) are invalidated.
+//
+// If the new segment would overlap an existing segment, or if r is invalid,
+// InsertWithoutMergingRange panics.
+//
+// InsertWithoutMergingRange searches the set to find the gap to insert into.
+// If the caller already has the appropriate GapIterator, or if the caller
+// needs to do additional work between finding the gap and insertion, use
+// InsertWithoutMerging instead.
+func (s *Set) InsertWithoutMergingRange(r Range, val Value) Iterator {
+	if r.Length() <= 0 {
+		panic(fmt.Sprintf("invalid segment range %v", r))
+	}
+	seg, gap := s.Find(r.Start)
+	if seg.Ok() {
+		panic(fmt.Sprintf("new segment %v overlaps existing segment %v", r, seg.Range()))
+	}
+	if gap.End() < r.End {
+		panic(fmt.Sprintf("new segment %v overlaps existing segment %v", r, gap.NextSegment().Range()))
+	}
+	return s.InsertWithoutMerging(gap, r, val)
+}
+
+// TryInsertRange attempts to insert the given segment into the set. If the new
+// segment can be merged with adjacent segments, TryInsertRange will do so.
+// TryInsertRange returns an iterator to the segment containing the inserted
+// value (which may have been merged with other values). All existing iterators
+// (excluding the returned iterator) are invalidated.
+//
+// If the new segment would overlap an existing segment, TryInsertRange does
+// nothing and returns a terminal iterator.
+//
+// TryInsertRange searches the set to find the gap to insert into. If the
+// caller already has the appropriate GapIterator, or if the caller needs to do
+// additional work between finding the gap and insertion, use Insert instead.
+func (s *Set) TryInsertRange(r Range, val Value) Iterator {
+	if r.Length() <= 0 {
+		panic(fmt.Sprintf("invalid segment range %v", r))
+	}
+	seg, gap := s.Find(r.Start)
+	if seg.Ok() {
+		return Iterator{}
+	}
+	if gap.End() < r.End {
+		return Iterator{}
+	}
+	return s.Insert(gap, r, val)
+}
+
+// TryInsertWithoutMergingRange attempts to insert the given segment into the
+// set. If successful, it returns an iterator to the inserted segment; all
+// existing iterators (excluding the returned iterator) are invalidated. If the
+// new segment would overlap an existing segment, TryInsertWithoutMergingRange
+// does nothing and returns a terminal iterator.
+//
+// TryInsertWithoutMergingRange searches the set to find the gap to insert
+// into. If the caller already has the appropriate GapIterator, or if the
+// caller needs to do additional work between finding the gap and insertion,
+// use InsertWithoutMerging instead.
+func (s *Set) TryInsertWithoutMergingRange(r Range, val Value) Iterator {
+	if r.Length() <= 0 {
+		panic(fmt.Sprintf("invalid segment range %v", r))
+	}
+	seg, gap := s.Find(r.Start)
+	if seg.Ok() {
+		return Iterator{}
+	}
+	if gap.End() < r.End {
+		return Iterator{}
+	}
+	return s.InsertWithoutMerging(gap, r, val)
+}
+
 // Remove removes the given segment and returns an iterator to the vacated gap.
 // All existing iterators (including seg, but not including the returned
 // iterator) are invalidated.
@@ -470,6 +597,11 @@ func (s *Set) RemoveAll() {
 
 // RemoveRange removes all segments in the given range. An iterator to the
 // newly formed gap is returned, and all existing iterators are invalidated.
+//
+// RemoveRange searches the set to find segments to remove. If the caller
+// already has an iterator to either end of the range of segments to remove, or
+// if the caller needs to do additional work before removing each segment,
+// iterate segments and call Remove in a loop instead.
 func (s *Set) RemoveRange(r Range) GapIterator {
 	seg, gap := s.Find(r.Start)
 	if seg.Ok() {
@@ -481,6 +613,126 @@ func (s *Set) RemoveRange(r Range) GapIterator {
 		gap = s.Remove(seg)
 	}
 	return gap
+}
+
+// Split splits the given segment at the given key and returns iterators to the
+// two resulting segments. All existing iterators (including seg, but not
+// including the returned iterators) are invalidated.
+//
+// If the segment cannot be split at split (because split is at the start or
+// end of the segment's range, so splitting would produce a segment with zero
+// length, or because split falls outside the segment's range altogether),
+// Split panics.
+func (s *Set) Split(seg Iterator, split Key) (Iterator, Iterator) {
+	if !seg.Range().CanSplitAt(split) {
+		panic(fmt.Sprintf("can't split %v at %v", seg.Range(), split))
+	}
+	return s.SplitUnchecked(seg, split)
+}
+
+// SplitUnchecked splits the given segment at the given key and returns
+// iterators to the two resulting segments. All existing iterators (including
+// seg, but not including the returned iterators) are invalidated.
+//
+// Preconditions: seg.Start() < key < seg.End().
+func (s *Set) SplitUnchecked(seg Iterator, split Key) (Iterator, Iterator) {
+	val1, val2 := (Functions{}).Split(seg.Range(), seg.Value(), split)
+	end2 := seg.End()
+	seg.SetEndUnchecked(split)
+	seg.SetValue(val1)
+	seg2 := s.InsertWithoutMergingUnchecked(seg.NextGap(), Range{split, end2}, val2)
+	// seg may now be invalid due to the Insert.
+	return seg2.PrevSegment(), seg2
+}
+
+// SplitBefore ensures that the given segment's start is at least start by
+// splitting at start if necessary, and returns an updated iterator to the
+// bounded segment. All existing iterators (including seg, but not including
+// the returned iterator) are invalidated.
+//
+// SplitBefore is usually when mutating segments in a range. In such cases,
+// when iterating segments in order of increasing keys, the first segment may
+// extend beyond the start of the range to be mutated, and needs to be
+// SplitBefore to ensure that only the part of the segment within the range is
+// mutated. When iterating segments in order of decreasing keys, SplitBefore
+// and SplitAfter; i.e. SplitBefore needs to be invoked on each segment, while
+// SplitAfter only needs to be invoked on the first.
+//
+// Preconditions: start < seg.End().
+func (s *Set) SplitBefore(seg Iterator, start Key) Iterator {
+	if seg.Range().CanSplitAt(start) {
+		_, seg = s.SplitUnchecked(seg, start)
+	}
+	return seg
+}
+
+// SplitAfter ensures that the given segment's end is at most end by splitting
+// at end if necessary, and returns an updated iterator to the bounded segment.
+// All existing iterators (including seg, but not including the returned
+// iterator) are invalidated.
+//
+// SplitAfter is usually used when mutating segments in a range. In such cases,
+// when iterating segments in order of increasing keys, each iterated segment
+// may extend beyond the end of the range to be mutated, and needs to be
+// SplitAfter to ensure that only the part of the segment within the range is
+// mutated. When iterating segments in order of decreasing keys, SplitBefore
+// and SplitAfter exchange roles; i.e. SplitBefore needs to be invoked on each
+// segment, while SplitAfter only needs to be invoked on the first.
+//
+// Preconditions: seg.Start() < end.
+func (s *Set) SplitAfter(seg Iterator, end Key) Iterator {
+	if seg.Range().CanSplitAt(end) {
+		seg, _ = s.SplitUnchecked(seg, end)
+	}
+	return seg
+}
+
+// LowerBoundSegmentSplitBefore combines LowerBoundSegment and SplitBefore.
+//
+// LowerBoundSegmentSplitBefore is usually used when mutating segments in a
+// range while iterating them in order of increasing keys. In such cases,
+// LowerBoundSegmentSplitBefore provides an iterator to the first segment to be
+// mutated, suitable as the initial value for a loop variable.
+func (s *Set) LowerBoundSegmentSplitBefore(min Key) Iterator {
+	seg := s.LowerBoundSegment(min)
+	if seg.Ok() {
+		seg = s.SplitBefore(seg, min)
+	}
+	return seg
+}
+
+// UpperBoundSegmentSplitAfter combines UpperBoundSegment and SplitAfter.
+//
+// UpperBoundSegmentSplitAfter is usually used when mutating segments in a
+// range while iterating them in order of decreasing keys. In such cases,
+// UpperBoundSegmentSplitAfter provides an iterator to the first segment to be
+// mutated, suitable as the initial value for a loop variable.
+func (s *Set) UpperBoundSegmentSplitAfter(max Key) Iterator {
+	seg := s.UpperBoundSegment(max)
+	if seg.Ok() {
+		seg = s.SplitAfter(seg, max)
+	}
+	return seg
+}
+
+// Isolate ensures that the given segment's range is a subset of r by splitting
+// at r.Start and r.End if necessary, and returns an updated iterator to the
+// bounded segment. All existing iterators (including seg, but not including
+// the returned iterators) are invalidated.
+//
+// Isolate is usually used when mutating part of a single segment, or when
+// mutating segments in a range where the first segment is not necessarily
+// split, making use of SplitBefore/SplitAfter complex.
+//
+// Preconditions: seg.Range().Overlaps(r).
+func (s *Set) Isolate(seg Iterator, r Range) Iterator {
+	if seg.Range().CanSplitAt(r.Start) {
+		_, seg = s.SplitUnchecked(seg, r.Start)
+	}
+	if seg.Range().CanSplitAt(r.End) {
+		seg, _ = s.SplitUnchecked(seg, r.End)
+	}
+	return seg
 }
 
 // Merge attempts to merge two neighboring segments. If successful, Merge
@@ -516,7 +768,7 @@ func (s *Set) MergeUnchecked(first, second Iterator) Iterator {
 	return Iterator{}
 }
 
-// MergeAll attempts to merge all adjacent segments in the set. All existing
+// MergeAll merges all mergeable adjacent segments in the set. All existing
 // iterators are invalidated.
 func (s *Set) MergeAll() {
 	seg := s.FirstSegment()
@@ -533,9 +785,90 @@ func (s *Set) MergeAll() {
 	}
 }
 
-// MergeRange attempts to merge all adjacent segments that contain a key in the
-// specific range. All existing iterators are invalidated.
-func (s *Set) MergeRange(r Range) {
+// MergePrev attempts to merge the given segment with its predecessor if
+// possible, and returns an updated iterator to the extended segment. All
+// existing iterators (including seg, but not including the returned iterator)
+// are invalidated. As a special case, if seg is a terminal iterator, MergePrev
+// does nothing and returns a terminal iterator.
+//
+// MergePrev is usually used when mutating segments while iterating them in
+// order of increasing keys, to attempt merging of each mutated segment with
+// its previously-mutated predecessor. In such cases, merging a mutated segment
+// with its unmutated successor would incorrectly cause the latter to be
+// skipped. The special handling of terminal iterators permits callers to pass
+// the value of the iterator after the final iteration to MergePrev without
+// checking; this final call is necessary to ensure that the final mutated
+// segment is merged with its unmutated successor if possible.
+func (s *Set) MergePrev(seg Iterator) Iterator {
+	if !seg.Ok() {
+		return seg
+	}
+	if prev := seg.PrevSegment(); prev.Ok() {
+		if mseg := s.MergeUnchecked(prev, seg); mseg.Ok() {
+			seg = mseg
+		}
+	}
+	return seg
+}
+
+// MergeNext attempts to merge the given segment with its successor if
+// possible, and returns an updated iterator to the extended segment. All
+// existing iterators (including seg, but not including the returned iterator)
+// are invalidated. As a special case, if seg is a terminal iterator, MergeNext
+// does nothing and returns a terminal iterator.
+//
+// MergeNext is usually used when mutating segments while iterating them in
+// order of decreasing keys, to attempt merging of each mutated segment with
+// its previously-mutated successor. In such cases, merging a mutated segment
+// with its unmutated predecessor would incorrectly cause the latter to be
+// skipped. The special handling of terminal iterators permits callers to pass
+// the value of the iterator after the final iteration to MergeNext without
+// checking; this final call is necessary to ensure that the final mutated
+// segment is merged with its unmutated predecessor if possible.
+func (s *Set) MergeNext(seg Iterator) Iterator {
+	if !seg.Ok() {
+		return seg
+	}
+	if next := seg.NextSegment(); next.Ok() {
+		if mseg := s.MergeUnchecked(seg, next); mseg.Ok() {
+			seg = mseg
+		}
+	}
+	return seg
+}
+
+// MergeAdjacent attempts to merge the given segment with its predecessor and
+// successor if possible, and returns an updated iterator to the extended
+// segment. All existing iterators (including seg, but not including the
+// returned iterator) are invalidated.
+//
+// MergeAdjacent is usually used in conjunction with Isolate when mutating part
+// of a single segment in a way that may affect its mergeability. For the
+// reasons described by MergePrev and MergeNext, it is usually incorrect to use
+// the return value of MergeAdjacent in a loop variable. Thus, MergeAdjacent is
+// not named Unisolate despite being in some ways the dual of Isolate.
+func (s *Set) MergeAdjacent(seg Iterator) Iterator {
+	if prev := seg.PrevSegment(); prev.Ok() {
+		if mseg := s.MergeUnchecked(prev, seg); mseg.Ok() {
+			seg = mseg
+		}
+	}
+	if next := seg.NextSegment(); next.Ok() {
+		if mseg := s.MergeUnchecked(seg, next); mseg.Ok() {
+			seg = mseg
+		}
+	}
+	return seg
+}
+
+// MergeInsideRange attempts to merge all adjacent segments that contain a key
+// in the specific range. All existing iterators are invalidated.
+//
+// MergeInsideRange only makes sense after mutating the set in a way that may
+// change the mergeability of modified segments; callers should prefer to use
+// MergePrev or MergeNext during the mutating loop instead (depending on the
+// direction of iteration), in order to avoid a redundant search.
+func (s *Set) MergeInsideRange(r Range) {
 	seg := s.LowerBoundSegment(r.Start)
 	if !seg.Ok() {
 		return
@@ -550,9 +883,14 @@ func (s *Set) MergeRange(r Range) {
 	}
 }
 
-// MergeAdjacent attempts to merge the segment containing r.Start with its
+// MergeOutsideRange attempts to merge the segment containing r.Start with its
 // predecessor, and the segment containing r.End-1 with its successor.
-func (s *Set) MergeAdjacent(r Range) {
+//
+// MergeOutsideRange only makes sense after mutating the set in a way that may
+// change the mergeability of modified segments; callers should prefer to use
+// MergePrev or MergeNext during the mutating loop instead (depending on the
+// direction of iteration), in order to avoid two redundant searches.
+func (s *Set) MergeOutsideRange(r Range) {
 	first := s.FindSegment(r.Start)
 	if first.Ok() {
 		if prev := first.PrevSegment(); prev.Ok() {
@@ -567,61 +905,6 @@ func (s *Set) MergeAdjacent(r Range) {
 	}
 }
 
-// Split splits the given segment at the given key and returns iterators to the
-// two resulting segments. All existing iterators (including seg, but not
-// including the returned iterators) are invalidated.
-//
-// If the segment cannot be split at split (because split is at the start or
-// end of the segment's range, so splitting would produce a segment with zero
-// length, or because split falls outside the segment's range altogether),
-// Split panics.
-func (s *Set) Split(seg Iterator, split Key) (Iterator, Iterator) {
-	if !seg.Range().CanSplitAt(split) {
-		panic(fmt.Sprintf("can't split %v at %v", seg.Range(), split))
-	}
-	return s.SplitUnchecked(seg, split)
-}
-
-// SplitUnchecked splits the given segment at the given key and returns
-// iterators to the two resulting segments. All existing iterators (including
-// seg, but not including the returned iterators) are invalidated.
-//
-// Preconditions: seg.Start() < key < seg.End().
-func (s *Set) SplitUnchecked(seg Iterator, split Key) (Iterator, Iterator) {
-	val1, val2 := (Functions{}).Split(seg.Range(), seg.Value(), split)
-	end2 := seg.End()
-	seg.SetEndUnchecked(split)
-	seg.SetValue(val1)
-	seg2 := s.InsertWithoutMergingUnchecked(seg.NextGap(), Range{split, end2}, val2)
-	// seg may now be invalid due to the Insert.
-	return seg2.PrevSegment(), seg2
-}
-
-// SplitAt splits the segment straddling split, if one exists. SplitAt returns
-// true if a segment was split and false otherwise. If SplitAt splits a
-// segment, all existing iterators are invalidated.
-func (s *Set) SplitAt(split Key) bool {
-	if seg := s.FindSegment(split); seg.Ok() && seg.Range().CanSplitAt(split) {
-		s.SplitUnchecked(seg, split)
-		return true
-	}
-	return false
-}
-
-// Isolate ensures that the given segment's range does not escape r by
-// splitting at r.Start and r.End if necessary, and returns an updated iterator
-// to the bounded segment. All existing iterators (including seg, but not
-// including the returned iterators) are invalidated.
-func (s *Set) Isolate(seg Iterator, r Range) Iterator {
-	if seg.Range().CanSplitAt(r.Start) {
-		_, seg = s.SplitUnchecked(seg, r.Start)
-	}
-	if seg.Range().CanSplitAt(r.End) {
-		seg, _ = s.SplitUnchecked(seg, r.End)
-	}
-	return seg
-}
-
 // ApplyContiguous applies a function to a contiguous range of segments,
 // splitting if necessary. The function is applied until the first gap is
 // encountered, at which point the gap is returned. If the function is applied
@@ -629,6 +912,8 @@ func (s *Set) Isolate(seg Iterator, r Range) Iterator {
 // are invalidated.
 //
 // N.B. The Iterator must not be invalidated by the function.
+//
+// Deprecated: Iterate using NextNonEmpty instead.
 func (s *Set) ApplyContiguous(r Range, fn func(seg Iterator)) GapIterator {
 	seg, gap := s.Find(r.Start)
 	if !seg.Ok() {

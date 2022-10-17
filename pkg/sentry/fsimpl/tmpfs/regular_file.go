@@ -307,7 +307,9 @@ func (rf *regularFile) Translate(ctx context.Context, required, optional memmap.
 		}
 		optional = required
 	}
-	pagesAlloced, cerr := rf.data.Fill(ctx, required, optional, rf.size.RacyLoad(), rf.inode.fs.mf, rf.memoryUsageKind, false /* populate */, func(_ context.Context, dsts safemem.BlockSeq, _ uint64) (uint64, error) {
+	pagesAlloced, cerr := rf.data.Fill(ctx, required, optional, rf.size.RacyLoad(), rf.inode.fs.mf, pgalloc.AllocOpts{
+		Kind: rf.memoryUsageKind,
+	}, func(_ context.Context, dsts safemem.BlockSeq, _ uint64) (uint64, error) {
 		// Newly-allocated pages are zeroed, so we don't need to do anything.
 		return dsts.NumBytes(), nil
 	})
@@ -385,10 +387,14 @@ func (fd *regularFileFD) Allocate(ctx context.Context, mode, offset, length uint
 	if !f.inode.fs.accountPages(pagesToFill) {
 		return linuxerr.ENOSPC
 	}
-	// Pass populate = true here despite the fact that we don't touch these pages
-	// both for consistency with the expected behavior of fallocate(2) and in
-	// expectation of a future write to them.
-	pagesAlloced, err := f.data.Fill(ctx, required, required, newSize, f.inode.fs.mf, f.memoryUsageKind, true /* populate */, func(_ context.Context, dsts safemem.BlockSeq, _ uint64) (uint64, error) {
+	pagesAlloced, err := f.data.Fill(ctx, required, required, newSize, f.inode.fs.mf, pgalloc.AllocOpts{
+		Kind: f.memoryUsageKind,
+		// Request that these pages are precommitted and populated despite the fact
+		// that we don't touch these pages, both for consistency with the expected
+		// behavior of fallocate(2) and in expectation of a future write to them.
+		Hint:                pgalloc.HintAll,
+		TryPopulateInternal: true,
+	}, func(_ context.Context, dsts safemem.BlockSeq, _ uint64) (uint64, error) {
 		// Newly-allocated pages are zeroed, so we don't need to do anything.
 		return dsts.NumBytes(), nil
 	})
@@ -729,7 +735,11 @@ func (rw *regularFileReadWriter) WriteFromBlocks(srcs safemem.BlockSeq) (uint64,
 				goto exitLoop
 			}
 			gapMR.End = gapMR.Start + (hostarch.PageSize * pagesReserved)
-			fr, err := rw.file.inode.fs.mf.Allocate(gapMR.Length(), pgalloc.AllocOpts{Kind: rw.file.memoryUsageKind})
+			fr, err := rw.file.inode.fs.mf.Allocate(gapMR.Length(), pgalloc.AllocOpts{
+				Kind:                rw.file.memoryUsageKind,
+				Hint:                pgalloc.HintAll,
+				TryPopulateInternal: true,
+			})
 			if err != nil {
 				retErr = err
 				rw.file.inode.fs.unaccountPages(pagesReserved)

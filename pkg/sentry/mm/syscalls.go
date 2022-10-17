@@ -657,10 +657,10 @@ func (mm *MemoryManager) MProtect(addr hostarch.Addr, length uint64, realPerms h
 	mm.activeMu.Lock()
 	defer mm.activeMu.Unlock()
 	defer func() {
-		mm.vmas.MergeRange(ar)
-		mm.vmas.MergeAdjacent(ar)
-		mm.pmas.MergeRange(ar)
-		mm.pmas.MergeAdjacent(ar)
+		mm.vmas.MergeInsideRange(ar)
+		mm.vmas.MergeOutsideRange(ar)
+		mm.pmas.MergeInsideRange(ar)
+		mm.pmas.MergeOutsideRange(ar)
 	}()
 	pseg := mm.pmas.LowerBoundSegment(ar.Start)
 	var didUnmapAS bool
@@ -869,8 +869,8 @@ func (mm *MemoryManager) MLock(ctx context.Context, addr hostarch.Addr, length u
 		}
 		vseg, _ = vseg.NextNonEmpty()
 	}
-	mm.vmas.MergeRange(ar)
-	mm.vmas.MergeAdjacent(ar)
+	mm.vmas.MergeInsideRange(ar)
+	mm.vmas.MergeOutsideRange(ar)
 	if unmapped {
 		mm.mappingMu.Unlock()
 		return linuxerr.ENOMEM
@@ -1034,8 +1034,8 @@ func (mm *MemoryManager) SetNumaPolicy(addr hostarch.Addr, length uint64, policy
 	mm.mappingMu.Lock()
 	defer mm.mappingMu.Unlock()
 	defer func() {
-		mm.vmas.MergeRange(ar)
-		mm.vmas.MergeAdjacent(ar)
+		mm.vmas.MergeInsideRange(ar)
+		mm.vmas.MergeOutsideRange(ar)
 	}()
 	vseg := mm.vmas.LowerBoundSegment(ar.Start)
 	lastEnd := ar.Start
@@ -1067,8 +1067,8 @@ func (mm *MemoryManager) SetDontFork(addr hostarch.Addr, length uint64, dontfork
 	mm.mappingMu.Lock()
 	defer mm.mappingMu.Unlock()
 	defer func() {
-		mm.vmas.MergeRange(ar)
-		mm.vmas.MergeAdjacent(ar)
+		mm.vmas.MergeInsideRange(ar)
+		mm.vmas.MergeOutsideRange(ar)
 	}()
 
 	for vseg := mm.vmas.LowerBoundSegment(ar.Start); vseg.Ok() && vseg.Start() < ar.End; vseg = vseg.NextSegment() {
@@ -1096,11 +1096,27 @@ func (mm *MemoryManager) Decommit(addr hostarch.Addr, length uint64) error {
 	defer mm.activeMu.Unlock()
 
 	// This is invalidateLocked(invalidatePrivate=true, invalidateShared=true),
-	// with the additional wrinkle that we must refuse to invalidate pmas under
-	// mlocked vmas.
-	var didUnmapAS bool
+	// but:
+	//
+	//	- We must refuse to invalidate pmas under mlocked vmas.
+	//
+	//	- If at least one byte in ar is not covered by a vma, decommit the rest
+	//	but return ENOMEM.
+	//
+	//	- If we would invalidate only part of a huge page that we own (is not
+	//	copy-on-write), use MemoryFile.Decommit() instead to keep the allocated
+	//	huge page intact for future use.
+	didUnmapAS := false
 	pseg := mm.pmas.LowerBoundSegment(ar.Start)
-	for vseg := mm.vmas.LowerBoundSegment(ar.Start); vseg.Ok() && vseg.Start() < ar.End; vseg = vseg.NextSegment() {
+	vseg := mm.vmas.LowerBoundSegment(ar.Start)
+	if !vseg.Ok() {
+		return linuxerr.ENOMEM
+	}
+	hadvgap := false
+	if ar.Start < vseg.Start() {
+		hadvgap = true
+	}
+	for vseg.Ok() && vseg.Start() < ar.End {
 		vma := vseg.ValuePtr()
 		if vma.mlockMode != memmap.MLockNone {
 			return linuxerr.EINVAL
@@ -1114,29 +1130,82 @@ func (mm *MemoryManager) Decommit(addr hostarch.Addr, length uint64) error {
 			}
 		}
 		for pseg.Ok() && pseg.Start() < vsegAR.End {
-			pseg = mm.pmas.Isolate(pseg, vsegAR)
 			pma := pseg.ValuePtr()
+			if pma.huge && !mm.isPMACopyOnWriteLocked(vseg, pseg) {
+				psegAR := pseg.Range().Intersect(vsegAR)
+				if !psegAR.IsHugePageAligned() {
+					firstHugeStart := psegAR.Start.HugeRoundDown()
+					firstHugeEnd := firstHugeStart + hostarch.HugePageSize
+					lastWholeHugeEnd := psegAR.End.HugeRoundDown()
+					if firstHugeStart != psegAR.Start {
+						// psegAR.Start is not aligned.
+						if psegAR.End <= firstHugeEnd {
+							// All of psegAR falls within a single huge page.
+							mm.mf.Decommit(pseg.fileRangeOf(psegAR))
+							pseg = pseg.NextSegment()
+							continue
+						}
+						if firstHugeEnd == lastWholeHugeEnd && lastWholeHugeEnd != psegAR.End {
+							// All of psegAR falls within two huge pages, and psegAR.End is
+							// also not aligned.
+							mm.mf.Decommit(pseg.fileRangeOf(psegAR))
+							pseg = pseg.NextSegment()
+							continue
+						}
+						mm.mf.Decommit(pseg.fileRangeOf(hostarch.AddrRange{psegAR.Start, firstHugeEnd}))
+						psegAR.Start = firstHugeEnd
+					}
+					// Drop whole huge pages between psegAR.Start (which after the above
+					// is either firstHugeStart or firstHugeEnd) and lastWholeHugeEnd
+					// normally.
+					if psegAR.Start < lastWholeHugeEnd {
+						pseg = mm.pmas.Isolate(pseg, hostarch.AddrRange{psegAR.Start, lastWholeHugeEnd})
+						pma = pseg.ValuePtr()
+						if !didUnmapAS {
+							// Unmap all of ar, not just pseg.Range(), to minimize host
+							// syscalls. AddressSpace mappings must be removed before
+							// pma.file.DecRef().
+							mm.unmapASLocked(ar)
+							didUnmapAS = true
+						}
+						pma.file.DecRef(pseg.fileRange())
+						mm.removeRSSLocked(pseg.Range())
+						pseg = mm.pmas.Remove(pseg).NextSegment()
+					}
+					if lastWholeHugeEnd != psegAR.End {
+						// psegAR.End is not aligned.
+						mm.mf.Decommit(pseg.fileRangeOf(hostarch.AddrRange{lastWholeHugeEnd, psegAR.End}))
+					}
+				}
+			}
+			pseg = mm.pmas.Isolate(pseg, vsegAR)
+			pma = pseg.ValuePtr()
 			if !didUnmapAS {
 				// Unmap all of ar, not just pseg.Range(), to minimize host
 				// syscalls. AddressSpace mappings must be removed before
-				// mm.decPrivateRef().
+				// pma.file.DecRef().
 				mm.unmapASLocked(ar)
 				didUnmapAS = true
-			}
-			if pma.private {
-				mm.decPrivateRef(pseg.fileRange())
 			}
 			pma.file.DecRef(pseg.fileRange())
 			mm.removeRSSLocked(pseg.Range())
 			pseg = mm.pmas.Remove(pseg).NextSegment()
 		}
+		vgap := vseg.NextGap()
+		if ar.End <= vgap.Start() {
+			break
+		}
+		if !vgap.IsEmpty() {
+			hadvgap = true
+		}
+		vseg = vgap.NextSegment()
 	}
 
 	// "If there are some parts of the specified address space that are not
 	// mapped, the Linux version of madvise() ignores them and applies the call
 	// to the rest (but returns ENOMEM from the system call, as it should)." -
 	// madvise(2)
-	if mm.vmas.SpanRange(ar) != ar.Length() {
+	if hadvgap {
 		return linuxerr.ENOMEM
 	}
 	return nil

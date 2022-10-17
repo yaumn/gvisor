@@ -24,7 +24,6 @@ import (
 	"gvisor.dev/gvisor/pkg/safemem"
 	"gvisor.dev/gvisor/pkg/sentry/memmap"
 	"gvisor.dev/gvisor/pkg/sentry/pgalloc"
-	"gvisor.dev/gvisor/pkg/sentry/usage"
 )
 
 // FileRangeSet maps offsets into a memmap.Mappable to offsets into a
@@ -98,8 +97,7 @@ func (frs *FileRangeSet) PagesToFill(required, optional memmap.MappableRange) ui
 // bytes have been read.) EOF is handled consistently with the requirements of
 // mmap(2): bytes after EOF on the same page are zeroed; pages after EOF are
 // invalid. fileSize is an upper bound on the file's size; bytes after fileSize
-// will be zeroed without calling readAt. populate has the same meaning as the
-// pgalloc.MemoryFile.AllocateAndFill() argument of the same name.
+// will be zeroed without calling readAt.
 //
 // Fill may read offsets outside of required, but will never read offsets
 // outside of optional. It returns a non-nil error if any error occurs, even
@@ -111,7 +109,7 @@ func (frs *FileRangeSet) PagesToFill(required, optional memmap.MappableRange) ui
 //   - required.Length() > 0.
 //   - optional.IsSupersetOf(required).
 //   - required and optional must be page-aligned.
-func (frs *FileRangeSet) Fill(ctx context.Context, required, optional memmap.MappableRange, fileSize uint64, mf *pgalloc.MemoryFile, kind usage.MemoryKind, populate bool, readAt func(ctx context.Context, dsts safemem.BlockSeq, offset uint64) (uint64, error)) (uint64, error) {
+func (frs *FileRangeSet) Fill(ctx context.Context, required, optional memmap.MappableRange, fileSize uint64, mf *pgalloc.MemoryFile, opts pgalloc.AllocOpts, readAt func(ctx context.Context, dsts safemem.BlockSeq, offset uint64) (uint64, error)) (uint64, error) {
 	gap := frs.LowerBoundGap(required.Start)
 	var pagesAlloced uint64
 	for gap.Ok() && gap.Start() < required.End {
@@ -122,7 +120,7 @@ func (frs *FileRangeSet) Fill(ctx context.Context, required, optional memmap.Map
 		gr := gap.Range().Intersect(optional)
 
 		// Read data into the gap.
-		fr, err := mf.AllocateAndFill(gr.Length(), kind, populate, safemem.ReaderFunc(func(dsts safemem.BlockSeq) (uint64, error) {
+		fr, err := mf.AllocateAndFill(gr.Length(), opts, safemem.ReaderFunc(func(dsts safemem.BlockSeq) (uint64, error) {
 			var done uint64
 			for !dsts.IsEmpty() {
 				n, err := func() (uint64, error) {
@@ -211,8 +209,7 @@ func (frs *FileRangeSet) Truncate(end uint64, mf *pgalloc.MemoryFile) uint64 {
 		pgend := uint64(pgendaddr)
 
 		// Free truncated pages.
-		frs.SplitAt(pgend)
-		seg := frs.LowerBoundSegment(pgend)
+		seg := frs.LowerBoundSegmentSplitBefore(pgend)
 		for seg.Ok() {
 			mf.DecRef(seg.FileRange())
 			pagesFreed += seg.Range().Length() / hostarch.PageSize
