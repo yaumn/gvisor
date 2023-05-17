@@ -291,13 +291,15 @@ func (q *fastPathDispatcher) stubFastPathEnabled() bool {
 // disableStubFastPath disables the fast path over all subprocesses with active
 // contexts.
 func (q *fastPathDispatcher) disableStubFastPath() {
+	return
+	q.fastPathDisabledTS.Store(uint64(cputicks()))
+
 	q.subprocessListMu.Lock()
 	defer q.subprocessListMu.Unlock()
 
 	for s := q.subprocessList.Front(); s != nil; s = s.Next() {
 		s.contextQueue.disableFastPath()
 	}
-	q.fastPathDisabledTS.Store(uint64(cputicks()))
 }
 
 func (q *fastPathDispatcher) activateSubprocess(s *subprocess) {

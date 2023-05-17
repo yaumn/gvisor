@@ -693,7 +693,7 @@ func (s *subprocess) incAwakeContexts() {
 		dispatcher.activateSubprocess(s)
 	}
 	nr = nrMaxAwakeStubThreads.Add(1)
-	if nr > fastPathContextLimit {
+	if false && nr > fastPathContextLimit {
 		if dispatcher.stubFastPathEnabled() {
 			dispatcher.disableStubFastPath()
 		}
