@@ -320,6 +320,7 @@ func (q *fastPathDispatcher) deactivateSubprocess(s *subprocess) {
 // trip in the pure deep sleep case.
 const deepSleepTimeout = uint64(80000)
 const handshakeTimeout = uint64(1000)
+const contextSlowPathTimeout = uint64(20 * 1000 * 1000)
 
 // loop is processing contexts in the queue. Only one instance of it can be
 // running, because it has exclusive access to the list.
@@ -367,6 +368,8 @@ func (q *fastPathDispatcher) loop(target *sharedContext) {
 						continue
 					}
 					event = sharedContextKicked
+				} else if uint64(now-ctx.startWaitingTS) > contextSlowPathTimeout {
+					event = sharedContextSlowPath
 				} else {
 					continue
 				}
