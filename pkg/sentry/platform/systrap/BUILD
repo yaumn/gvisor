@@ -20,7 +20,7 @@ go_template_instance(
 
 go_template_instance(
     name = "subprocess_list",
-    out = "subprocess_list.go",
+    out = "subprocess_list1.go",
     package = "systrap",
     prefix = "subprocess",
     template = "//pkg/ilist:generic_list",
