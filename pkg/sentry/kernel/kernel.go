@@ -367,6 +367,13 @@ type InitKernelArgs struct {
 // Callers must manually set Kernel.Platform and call Kernel.SetMemoryFile
 // before calling Init.
 func (k *Kernel) Init(args InitKernelArgs) error {
+	go func() {
+		for i := 0; i < 10; i++ {
+			time.Sleep(time.Minute)
+			log.Warningf("==================\n%s", log.Stacks(true))
+		}
+		panic("timeout")
+	}()
 	if args.Timekeeper == nil {
 		return fmt.Errorf("args.Timekeeper is nil")
 	}
