@@ -165,6 +165,7 @@ func getTests(ctx context.Context, d *dockerutil.Container, lang, image string, 
 		itests = append(itests, testing.InternalTest{
 			Name: strings.Join(tcs, ", "),
 			F: func(t *testing.T) {
+				t.Logf("Container ID: %s", d.ID())
 				var (
 					now    = time.Now()
 					done   = make(chan struct{})
@@ -201,7 +202,10 @@ func getTests(ctx context.Context, d *dockerutil.Container, lang, image string, 
 					t.Fatalf("FAIL: (%v):\nBatch:\n%s\nOutput:\n%s\n", time.Since(now), strings.Join(tcs, "\n"), output)
 				// Add one minute to let proctor handle timeout.
 				case <-timeoutChan:
-					t.Fatalf("TIMEOUT: (%v):\nBatch:\n%s\nOutput:\n%s\n", time.Since(now), strings.Join(tcs, "\n"), output)
+					ps, pserr := d.Exec(ctx, dockerutil.ExecOpts{Privileged: true, User: "0"}, "ps", "axf")
+					t.Errorf("TIMEOUT: (%v):\nBatch:\n%s\nps err: %s\nps:\n%s\n", time.Since(now), strings.Join(tcs, "\n"), pserr, ps)
+					d.Kill(ctx)
+
 				}
 			},
 		})
