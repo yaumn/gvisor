@@ -430,6 +430,9 @@ func (s *subprocess) Release() {
 
 // release returns the subprocess to the global pool.
 func (s *subprocess) release() {
+	if atomic.LoadUint32(&s.contextQueue.numAwakeContexts) != 0 {
+		panic("numAwakeContexts isn't zero")
+	}
 	globalPool.markAvailable(s)
 }
 
