@@ -619,6 +619,7 @@ cc_binary(
         "//test/util:file_descriptor",
         "@com_google_absl//absl/memory",
         gtest,
+        "//test/util:capability_util",
         "//test/util:fs_util",
         "//test/util:posix_error",
         "//test/util:temp_path",

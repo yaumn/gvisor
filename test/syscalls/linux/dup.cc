@@ -16,10 +16,12 @@
 #include <sys/resource.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <memory>
 
 #include "gtest/gtest.h"
 #include "absl/memory/memory.h"
+#include "test/util/capability_util.h"
 #include "test/util/eventfd_util.h"
 #include "test/util/file_descriptor.h"
 #include "test/util/fs_util.h"
@@ -138,6 +140,35 @@ TEST(DupTest, Rlimit) {
     fds.push_back(std::move(f));
   }
   EXPECT_EQ(fds.size() + used_fds, kFDLimit - fd.get() - 1);
+}
+
+TEST(RlimitTest, DupLimitedByNROpenSysctl) {
+  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SYS_RESOURCE)));
+
+  FileDescriptor fd =
+      ASSERT_NO_ERRNO_AND_VALUE(Open("/proc/sys/fs/nr_open", O_RDONLY));
+  char buf[11] = "";
+  ASSERT_THAT(ReadFd(fd.get(), buf, sizeof(buf)), SyscallSucceeds());
+
+  int nrOpen;
+  ASSERT_TRUE(absl::SimpleAtoi(buf, &nrOpen));
+  EXPECT_GE(nrOpen, 8);
+
+  struct rlimit rl = {};
+  rl.rlim_cur = nrOpen + 1;
+  rl.rlim_max = nrOpen + 1;
+  int ret = setrlimit(RLIMIT_NOFILE, &rl);
+  if (ret == -1 && errno == EPERM) {
+    // Linux doesn't allow to set RLIMIT_NOFILE higher than the nr_open limit.
+    rl.rlim_cur = nrOpen;
+    rl.rlim_max = nrOpen;
+    ASSERT_THAT(setrlimit(RLIMIT_NOFILE, &rl), SyscallSucceeds());
+  } else {
+    ASSERT_THAT(ret, SyscallSucceeds());
+  }
+
+  ASSERT_THAT(dup3(fd.get(), nrOpen, 0), SyscallFailsWithErrno(EBADF));
+  ASSERT_THAT(dup3(fd.get(), nrOpen - 1, 0), SyscallSucceeds());
 }
 
 TEST(DupTest, Dup2SameFD) {

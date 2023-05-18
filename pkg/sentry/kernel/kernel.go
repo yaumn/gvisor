@@ -313,6 +313,10 @@ type Kernel struct {
 	// userCountersMap maps auth.KUID into a set of user counters.
 	userCountersMap   map[auth.KUID]*userCounters
 	userCountersMapMu userCountersMutex `state:"nosave"`
+
+	// MaxFDLimit specifies the maximum file descriptor number that a
+	// process can be opened by this process.
+	MaxFDLimit atomicbitops.Int32
 }
 
 // InitKernelArgs holds arguments to Init.
@@ -414,6 +418,7 @@ func (k *Kernel) Init(args InitKernelArgs) error {
 	k.ptraceExceptions = make(map[*Task]*Task)
 	k.YAMAPtraceScope = atomicbitops.FromInt32(linux.YAMA_SCOPE_RELATIONAL)
 	k.userCountersMap = make(map[auth.KUID]*userCounters)
+	k.MaxFDLimit.Store(defaultMaxFDLimit)
 
 	ctx := k.SupervisorContext()
 	if err := k.vfs.Init(ctx); err != nil {
