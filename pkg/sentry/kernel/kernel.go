@@ -368,7 +368,7 @@ type InitKernelArgs struct {
 // before calling Init.
 func (k *Kernel) Init(args InitKernelArgs) error {
 	go func() {
-		for i := 0; i < 10; i++ {
+		for i := 0; i < 15; i++ {
 			time.Sleep(time.Minute)
 			log.Warningf("==================\n%s", log.Stacks(true))
 		}

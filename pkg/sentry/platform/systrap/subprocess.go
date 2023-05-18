@@ -121,7 +121,6 @@ const (
 type subprocess struct {
 	platform.NoAddressSpaceIO
 	subprocessRefs
-	subprocessEntry
 
 	// requests is used to signal creation of new threads.
 	requests chan any
@@ -692,14 +691,9 @@ func (s *subprocess) incAwakeContexts() {
 	if nr > uint32(maxSysmsgThreads) {
 		return
 	}
-	if nr == 1 {
-		dispatcher.activateSubprocess(s)
-	}
 	nr = nrMaxAwakeStubThreads.Add(1)
-	if false && nr > fastPathContextLimit {
-		if dispatcher.stubFastPathEnabled() {
-			dispatcher.disableStubFastPath()
-		}
+	if nr > fastPathContextLimit {
+		dispatcher.disableStubFastPath()
 	}
 }
 
@@ -707,9 +701,6 @@ func (s *subprocess) decAwakeContexts() {
 	nr := atomic.AddUint32(&s.contextQueue.numAwakeContexts, ^uint32(0))
 	if nr >= uint32(maxSysmsgThreads) {
 		return
-	}
-	if nr == 0 {
-		dispatcher.deactivateSubprocess(s)
 	}
 	nrMaxAwakeStubThreads.Add(^uint32(0))
 }
