@@ -105,6 +105,9 @@ type RunOpts struct {
 
 	// Links is the list of containers to be connected to the container.
 	Links []string
+
+	// Devices are device requests on the container itself.
+	Devices []container.DeviceMapping
 }
 
 func makeContainer(ctx context.Context, logger testutil.Logger, runtime string) *Container {
@@ -278,6 +281,7 @@ func (c *Container) hostConfig(r RunOpts) *container.HostConfig {
 		Resources: container.Resources{
 			Memory:     int64(r.Memory), // In bytes.
 			CpusetCpus: r.CpusetCpus,
+			Devices:    r.Devices,
 		},
 	}
 }

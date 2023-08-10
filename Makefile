@@ -310,6 +310,12 @@ systrap-tests: load-basic $(RUNTIME_BIN)
 	@$(call test_runtime,$(RUNTIME),$(INTEGRATION_TARGETS))
 .PHONY: systrap-tests
 
+cos-gpu-tests: load-basic $(RUNTIME_BIN)
+	@$(call sudo,--test_env=RUNTIME=runc //test/gpu:cos_gpu_test)
+	@$(call install_runtime,$(RUNTIME),--platform=systrap --nvproxy=true)
+	@$(call test_runtime,$(RUNTIME),//test/gpu:cos_gpu_test)
+.PHONY: cos-gpu-tests
+
 iptables-tests: load-iptables $(RUNTIME_BIN)
 	@sudo modprobe iptable_filter
 	@sudo modprobe ip6table_filter

@@ -24,6 +24,8 @@ _templates:
   platform_specific_agents: &platform_specific_agents {}
   kvm_agents: &kvm_agents {kvm: "true"}
   ubuntu_agents: &ubuntu_agents {os: "ubuntu"}
+  # As of writing, GPUs only run on amd64.
+  cos_gpu_agents: &cos_gpu_agents {os: "cos", gpu: "true", arch: "amd64"}
   docker: &docker
     env:
       BUILDKITE_PIPELINE_INSTALL_RUNTIME: true
@@ -45,6 +47,7 @@ _templates:
     agents:
       <<: *kvm_agents
       <<: *platform_specific_agents
+      gpu: "false"
       arch: "amd64"
   netstack_test: &netstack_test
     env:
@@ -75,12 +78,14 @@ steps:
     label: ":fire: Smoke tests (AMD64)"
     command: make smoke-tests
     agents:
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *source_test
     label: ":fire: Smoke tests (ARM64)"
     command: make smoke-tests
     agents:
+      gpu: "false"
       arch: "arm64"
   - <<: *common
     <<: *source_test
@@ -88,6 +93,8 @@ steps:
       GLIBC_TUNABLES: glibc.pthread.rseq=0
     label: ":fire: Smoke race tests"
     command: make smoke-race-tests
+    agents:
+      gpu: "false"
 
   # Build runsc and pkg (presubmits only).
   - <<: *common
@@ -97,6 +104,7 @@ steps:
       - "make build TARGETS=//pkg/..."
       - "make build TARGETS=//runsc/..."
     agents:
+      gpu: "false"
       arch: "amd64"
 
   - <<: *common
@@ -106,6 +114,7 @@ steps:
       - "make build TARGETS=//pkg/..."
       - "make build TARGETS=//runsc/..."
     agents:
+      gpu: "false"
       arch: "arm64"
 
   # Build everything (continuous only).
@@ -114,6 +123,8 @@ steps:
     label: ":world_map: Build everything"
     commands:
       - "make build TARGETS=//..."
+    agents:
+      gpu: "false"
 
   # Check that the Go branch builds. This is not technically required, as this build is maintained
   # as a GitHub action in order to preserve this maintaince across forks. However, providing the
@@ -125,6 +136,8 @@ steps:
       - tools/go_branch.sh
       - git checkout go && git clean -xf .
       - go build ./...
+    agents:
+      gpu: "false"
 
   # Check that commonly used netstack packages build on various platforms.
   - <<: *common
@@ -135,6 +148,8 @@ steps:
       - tools/go_branch.sh
       - git checkout go && git clean -xf .
       - GOOS=darwin GOARCH=arm64 go build $$PACKAGES
+    agents:
+      gpu: "false"
   - <<: *common
     <<: *source_test
     <<: *netstack_test
@@ -143,6 +158,8 @@ steps:
       - tools/go_branch.sh
       - git checkout go && git clean -xf .
       - GOOS=windows GOARCH=amd64 go build $$PACKAGES
+    agents:
+      gpu: "false"
   - <<: *common
     <<: *source_test
     <<: *netstack_test
@@ -151,6 +168,8 @@ steps:
       - tools/go_branch.sh
       - git checkout go && git clean -xf .
       - GOOS=freebsd GOARCH=amd64 go build $$PACKAGES
+    agents:
+      gpu: "false"
   - <<: *common
     <<: *source_test
     <<: *netstack_test
@@ -159,6 +178,8 @@ steps:
       - tools/go_branch.sh
       - git checkout go && git clean -xf .
       - GOOS=openbsd GOARCH=amd64 go build $$PACKAGES
+    agents:
+      gpu: "false"
   - <<: *common
     <<: *source_test
     <<: *netstack_test
@@ -167,6 +188,8 @@ steps:
       - tools/go_branch.sh
       - git checkout go && git clean -xf .
       - GOOS=linux GOARCH=mips go build $$PACKAGES
+    agents:
+      gpu: "false"
 
   # Release workflow.
   - <<: *common
@@ -177,6 +200,7 @@ steps:
       - make BAZEL_OPTIONS=--config=aarch64 artifacts/aarch64
       - make release
     agents:
+      gpu: "false"
       arch: "amd64"
 
   # Images tests.
@@ -185,12 +209,14 @@ steps:
     label: ":docker: Images (x86_64)"
     command: make ARCH=x86_64 load-all-images
     agents:
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *source_test
     label: ":docker: Images (aarch64)"
     command: make ARCH=aarch64 load-all-images
     agents:
+      gpu: "false"
       arch: "amd64"
 
   # Basic unit tests.
@@ -198,11 +224,14 @@ steps:
     <<: *source_test
     label: ":golang: Nogo tests"
     command: make nogo-tests
+    agents:
+      gpu: "false"
   - <<: *common
     <<: *source_test
     label: ":test_tube: Unit tests (cgroupv1)"
     command: make unit-tests
     agents:
+      gpu: "false"
       cgroup: "v1"
       arch: "amd64"
   - <<: *common
@@ -210,6 +239,7 @@ steps:
     label: ":test_tube: Unit tests (cgroupv2)"
     command: make unit-tests
     agents:
+      gpu: "false"
       cgroup: "v2"
       arch: "amd64"
   - <<: *common
@@ -217,6 +247,7 @@ steps:
     label: ":test_tube: Unit tests (ARM64)"
     command: make unit-tests
     agents:
+      gpu: "false"
       arch: "arm64"
   - <<: *common
     <<: *source_test
@@ -226,6 +257,7 @@ steps:
     agents:
       <<: *kvm_agents
       cgroup: "v1"
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -238,6 +270,7 @@ steps:
     agents:
       <<: *kvm_agents
       cgroup: "v2"
+      gpu: "false"
       arch: "amd64"
   # All system call tests.
   - <<: *common
@@ -247,6 +280,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *kvm_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *source_test
@@ -254,6 +288,7 @@ steps:
     command: make BAZEL_OPTIONS=--test_tag_filters=runsc_ptrace,runsc_systrap syscall-tests
     parallelism: 10
     agents:
+      gpu: "false"
       arch: "arm64"
 
   # Integration tests.
@@ -264,6 +299,7 @@ steps:
     command: make docker-tests
     agents:
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
       cgroup: "v1"
   - <<: *common
@@ -274,8 +310,16 @@ steps:
     command: make docker-tests
     agents:
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
       cgroup: "v2"
+  - <<: *common
+    <<: *docker
+    label: ":tensorflow: GPU tests"
+    command: make cos-gpu-tests
+    soft_fail: true
+    agents:
+      <<: *cos_gpu_agents
   - <<: *common
     <<: *docker
     label: ":goggles: Overlay tests"
@@ -283,6 +327,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *source_test
@@ -291,6 +336,7 @@ steps:
     command: make portforward-tests
     agents:
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -299,6 +345,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -307,12 +354,14 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *source_test
     label: ":coffee: Do tests"
     command: make do-tests
     agents:
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -329,6 +378,7 @@ steps:
     command: make systrap-tests
     agents:
       <<: *kvm_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -337,6 +387,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -346,6 +397,7 @@ steps:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
       cgroup: "v1"
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -354,6 +406,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       cgroup: "v1"
   - <<: *common
     <<: *docker
@@ -364,6 +417,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       cgroup: "v2"
   - <<: *common
     <<: *docker
@@ -372,6 +426,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       cgroup: "v1"
   - <<: *common
     <<: *docker
@@ -381,6 +436,7 @@ steps:
     command: make containerd-test-1.5.11
     agents:
       <<: *ubuntu_agents
+      gpu: "false"
       cgroup: "v2"
   - <<: *common
     <<: *docker
@@ -389,6 +445,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       cgroup: "v1"
   - <<: *common
     <<: *docker
@@ -397,6 +454,7 @@ steps:
     command: make containerd-test-1.6.2
     agents:
       <<: *ubuntu_agents
+      gpu: "false"
       cgroup: "v2"
   - <<: *common
     <<: *source_test
@@ -406,6 +464,7 @@ steps:
       - sudo RUNTIME_ARGS=--directfs=true ./test/podman/run.sh
     agents:
       <<: *ubuntu_agents
+      gpu: "false"
       cgroup: "v2"
 
   # Check the website builds.
@@ -414,6 +473,7 @@ steps:
     label: ":earth_americas: Website tests"
     command: make website-build
     agents:
+      gpu: "false"
       arch: "amd64"
 
   # Networking tests.
@@ -423,18 +483,21 @@ steps:
     command: make iptables-tests
     agents:
       <<: *ubuntu_agents
+      gpu: "false"
   - <<: *common
     <<: *source_test
     label: ":construction_worker: Packetdrill tests"
     command: make packetdrill-tests
     agents:
       <<: *ubuntu_agents
+      gpu: "false"
   - <<: *common
     <<: *source_test
     label: ":hammer: Packetimpact tests"
     command: make packetimpact-tests
     agents:
       <<: *ubuntu_agents
+      gpu: "false"
 
   # Runtime tests.
   - <<: *common
@@ -445,6 +508,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -454,6 +518,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -463,6 +528,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -472,6 +538,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -481,6 +548,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
 
   # Runtime tests (goferfs). Continuous only.
@@ -493,6 +561,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -503,6 +572,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -513,6 +583,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -523,6 +594,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
   - <<: *common
     <<: *docker
@@ -533,6 +605,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *ubuntu_agents
+      gpu: "false"
       arch: "amd64"
 
   # Run basic benchmarks smoke tests (no upload).
@@ -545,6 +618,7 @@ steps:
     agents:
       <<: *platform_specific_agents
       <<: *kvm_agents
+      gpu: "false"
       arch: "amd64"
 
   # Run all benchmarks.
