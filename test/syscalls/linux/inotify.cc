@@ -1613,7 +1613,8 @@ TEST(Inotify, AddWatchOnInvalidPathFails) {
       SyscallFailsWithErrno(ENOENT));
 
   // Garbage path pointer.
-  EXPECT_THAT(inotify_add_watch(fd.get(), nullptr, IN_CREATE),
+  char* name = nullptr;
+  EXPECT_THAT(inotify_add_watch(fd.get(), name, IN_CREATE),
               SyscallFailsWithErrno(EFAULT));
 }
 

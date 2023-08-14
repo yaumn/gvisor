@@ -47,7 +47,8 @@ TEST(SchedGetparamTest, ImpossiblePIDReturnsESRCH) {
 }
 
 TEST(SchedGetparamTest, NullParamReturnsEINVAL) {
-  EXPECT_THAT(sched_getparam(0, nullptr), SyscallFailsWithErrno(EINVAL));
+  sched_param* param = nullptr;
+  EXPECT_THAT(sched_getparam(0, param), SyscallFailsWithErrno(EINVAL));
 }
 
 TEST(SchedGetschedulerTest, ReturnsSchedOther) {

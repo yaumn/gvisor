@@ -536,9 +536,9 @@ TEST_P(CookedPacketTest, ReceiveOutbound) {
 
 // Bind with invalid address.
 TEST_P(CookedPacketTest, BindFail) {
-  // Null address.
+  sockaddr* null_addr = nullptr;
   ASSERT_THAT(
-      bind(socket_, nullptr, sizeof(struct sockaddr)),
+      bind(socket_, null_addr, sizeof(struct sockaddr)),
       AnyOf(SyscallFailsWithErrno(EFAULT), SyscallFailsWithErrno(EINVAL)));
 
   // Address of size 1.

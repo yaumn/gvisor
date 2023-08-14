@@ -20,6 +20,8 @@
 #include <utility>
 #include <vector>
 
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
 #include "test/util/file_descriptor.h"
 #include "test/util/memory_util.h"
 #include "test/util/posix_error.h"
@@ -83,11 +85,13 @@ PosixErrorOr<Mapping> NoMappings() {
 using MsyncNoMappingTest = MsyncParameterizedTest;
 
 TEST_P(MsyncNoMappingTest, UnmappedAddressWithZeroLengthSucceeds) {
-  EXPECT_THAT(msync(nullptr, 0, msync_flags()), SyscallSucceeds());
+  void* null_addr = nullptr;
+  EXPECT_THAT(msync(null_addr, 0, msync_flags()), SyscallSucceeds());
 }
 
 TEST_P(MsyncNoMappingTest, UnmappedAddressWithNonzeroLengthFails) {
-  EXPECT_THAT(msync(nullptr, kPageSize, msync_flags()),
+  void* null_addr = nullptr;
+  EXPECT_THAT(msync(null_addr, kPageSize, msync_flags()),
               SyscallFailsWithErrno(ENOMEM));
 }
 
