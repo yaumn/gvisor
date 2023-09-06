@@ -83,11 +83,15 @@ TEST(MincoreTest, UnalignedLengthSucceedsAndIsRoundedUp) {
 }
 
 TEST(MincoreTest, ZeroLengthSucceedsAndAllowsAnyVecBelowTaskSize) {
-  EXPECT_THAT(mincore(nullptr, 0, nullptr), SyscallSucceeds());
+  void* start = nullptr;
+  unsigned char* vec = nullptr;
+  EXPECT_THAT(mincore(start, 0, vec), SyscallSucceeds());
 }
 
 TEST(MincoreTest, InvalidLengthFails) {
-  EXPECT_THAT(mincore(nullptr, -1, nullptr), SyscallFailsWithErrno(ENOMEM));
+  void* start = nullptr;
+  unsigned char* vec = nullptr;
+  EXPECT_THAT(mincore(start, -1, vec), SyscallFailsWithErrno(ENOMEM));
 }
 
 }  // namespace

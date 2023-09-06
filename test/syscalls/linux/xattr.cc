@@ -55,11 +55,11 @@ TEST_F(XattrTest, XattrNonexistentFile) {
 TEST_F(XattrTest, XattrNullName) {
   const char* path = test_file_name_.c_str();
 
-  EXPECT_THAT(setxattr(path, nullptr, nullptr, 0, /*flags=*/0),
+  char* name = nullptr;
+  EXPECT_THAT(setxattr(path, name, nullptr, 0, /*flags=*/0),
               SyscallFailsWithErrno(EFAULT));
-  EXPECT_THAT(getxattr(path, nullptr, nullptr, 0),
-              SyscallFailsWithErrno(EFAULT));
-  EXPECT_THAT(removexattr(path, nullptr), SyscallFailsWithErrno(EFAULT));
+  EXPECT_THAT(getxattr(path, name, nullptr, 0), SyscallFailsWithErrno(EFAULT));
+  EXPECT_THAT(removexattr(path, name), SyscallFailsWithErrno(EFAULT));
 }
 
 TEST_F(XattrTest, XattrEmptyName) {
@@ -384,7 +384,8 @@ TEST_F(XattrTest, SetXattrReplaceFlag) {
 TEST_F(XattrTest, SetXattrInvalidFlags) {
   const char* path = test_file_name_.c_str();
   int invalid_flags = 0xff;
-  EXPECT_THAT(setxattr(path, nullptr, nullptr, 0, invalid_flags),
+  char* null_name = nullptr;
+  EXPECT_THAT(setxattr(path, null_name, nullptr, 0, invalid_flags),
               SyscallFailsWithErrno(EINVAL));
 }
 

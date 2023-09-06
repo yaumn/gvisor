@@ -150,7 +150,9 @@ TEST(MadviseDontforkTest, AddressLength) {
 
   // Length must not roll over after rounding up.
   size_t badlen = std::numeric_limits<std::size_t>::max() - (kPageSize / 2);
-  EXPECT_THAT(madvise(0, badlen, MADV_DONTFORK), SyscallFailsWithErrno(EINVAL));
+  void* null_addr = nullptr;
+  EXPECT_THAT(madvise(null_addr, badlen, MADV_DONTFORK),
+              SyscallFailsWithErrno(EINVAL));
 
   // Length need not be page aligned - it is implicitly rounded up.
   EXPECT_THAT(madvise(addr, 1, MADV_DONTFORK), SyscallSucceeds());

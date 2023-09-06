@@ -391,7 +391,8 @@ TEST_P(IPUnboundSocketTest, NullTOS) {
   EXPECT_THAT(getsockopt(socket->get(), t.level, t.option, nullptr, &get_sz),
               SyscallFailsWithErrno(EFAULT));
   int get = -1;
-  EXPECT_THAT(getsockopt(socket->get(), t.level, t.option, &get, nullptr),
+  socklen_t* socklen_ptr = nullptr;
+  EXPECT_THAT(getsockopt(socket->get(), t.level, t.option, &get, socklen_ptr),
               SyscallFailsWithErrno(EFAULT));
 }
 
